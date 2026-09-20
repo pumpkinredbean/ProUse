@@ -1,0 +1,16 @@
+.state/
+.venv/
+venv/
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.log
+__pycache__/
+*.py[cod]
+.DS_Store
+artifacts/
+dist/
+build/
