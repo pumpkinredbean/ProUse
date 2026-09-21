@@ -20,10 +20,21 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install .
       - name: Compile
-        run: python -m compileall -q scripts
+        run: python -m compileall -q prouse scripts
       - name: Test
         run: python -m unittest discover -s scripts -p 'test_*.py'
+      - name: Build and inspect wheel
+        run: |
+          python -m pip wheel . --no-deps -w dist
+          python -m venv /tmp/prouse-wheel-test
+          /tmp/prouse-wheel-test/bin/pip install dist/prouse-*.whl
+          mkdir -p /tmp/prouse-wheel-project
+          echo 'wheel test' > /tmp/prouse-wheel-project/README.md
+          cd /tmp
+          /tmp/prouse-wheel-test/bin/prouse --version
+          PROUSE_HOME=/tmp/prouse-wheel-home /tmp/prouse-wheel-test/bin/prouse setup --workspace /tmp/prouse-wheel-project --no-input --json
+          /tmp/prouse-wheel-test/bin/python -c 'from importlib import resources; assert "ProUse" in resources.files("prouse_assets").joinpath("admin_ui", "index.html").read_text()'
       - name: Release checks
         run: python scripts/release_check.py

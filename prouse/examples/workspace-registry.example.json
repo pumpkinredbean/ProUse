@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "server_name": "ProUse",
+  "state_dir": ".state/orchestrator",
+  "default_worker_profile": "standard",
+  "model_capabilities": {"gpt-5-codex": ["high"]},
+  "worker_profiles": [
+    {"id": "standard", "label": "Standard", "model": "gpt-5-codex", "reasoning_effort": "high", "access": "full_access"}
+  ],
+  "workspaces": []
+}

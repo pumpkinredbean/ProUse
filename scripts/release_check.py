@@ -13,6 +13,8 @@ REQUIRED = [
     "CONTRIBUTING.md",
     ".gitignore",
     "requirements.txt",
+    "pyproject.toml",
+    "install.sh",
     ".github/workflows/ci.yml",
     "SKILL.md",
     "agents/openai.yaml",
@@ -25,11 +27,15 @@ REQUIRED = [
     "docs/mcp-tools.md",
     "docs/direct-execution.md",
     "docs/security-model.md",
+    "docs/install-for-agents.md",
     "examples/workspace-registry.example.json",
     "examples/workspace-registry.schema.json",
     "examples/context-policy.example.json",
     "scripts/check_worker_sandbox.py",
     "scripts/test_advisor_wait.py",
+    "scripts/test_cli.py",
+    "prouse/cli.py",
+    "prouse_assets/admin_ui/index.html",
 ]
 
 # Live runtime state and credentials never belong in the public tree. The advisor skill
@@ -77,6 +83,15 @@ def main() -> None:
     admin = (ROOT / "scripts/admin_server.py").read_text()
     if "default='127.0.0.1'" not in admin and 'default="127.0.0.1"' not in admin:
         fail("Admin server is not localhost-only by default")
+
+    packaging = (ROOT / "pyproject.toml").read_text()
+    if 'prouse = "prouse.cli:main"' not in packaging:
+        fail("installed prouse console entry point is missing")
+
+    agent_install = (ROOT / "docs/install-for-agents.md").read_text()
+    for command in ("prouse setup", "prouse start", "prouse status --json", "prouse mcp serve"):
+        if command not in agent_install:
+            fail("agent installation document is missing " + command)
 
     registry = json.loads((ROOT / "examples/workspace-registry.example.json").read_text())
     if registry.get("server_name") != "ProUse":

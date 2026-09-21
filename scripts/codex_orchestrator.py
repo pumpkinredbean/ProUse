@@ -22,8 +22,8 @@ from typing import Any
 
 from context_store import relative_path, ContextError
 
-MODEL = "gpt-5.6-sol"  # Deprecated single-root compatibility default.
-EFFORT = "xhigh"
+MODEL = "gpt-5-codex"  # Deprecated single-root compatibility default.
+EFFORT = "high"
 PROTOCOL_VERSION = 2
 MAX_TASK_CHARS = 12_000
 MAX_RESULT_CHARS = 14_000

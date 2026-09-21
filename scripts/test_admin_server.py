@@ -402,7 +402,8 @@ class HTTPTests(unittest.TestCase):
         self.assertEqual(self.call('/api/config/validate', {'bundle': self.admin.bundle()})[0], 404)
 
     def test_admin_ui_has_immediate_save_without_review_workflow(self):
-        source = (Path(__file__).with_name('admin_ui') / 'app.js').read_text()
+        from importlib import resources
+        source = resources.files('prouse_assets').joinpath('admin_ui', 'app.js').read_text()
         self.assertNotIn('설정 변경 검토', source)
         self.assertNotIn('/api/config/validate', source)
         self.assertNotIn('data-action="review"', source)

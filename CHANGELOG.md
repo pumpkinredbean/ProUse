@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Add the installable `prouse` command, repeatable `uv tool` bootstrap, preserved
+  first-run setup, foreground Admin lifecycle, diagnostics/logs, and isolated
+  launchd/systemd-user service definitions.
+- Add client-owned `prouse mcp serve`, packaged Admin/configuration assets, explicit
+  local/MCP/client readiness, agent installation guidance, and CLI/package regression
+  coverage.
+
 All notable public changes to ProUse are documented here.
 
 ## 0.1.0 - 2026-09-21

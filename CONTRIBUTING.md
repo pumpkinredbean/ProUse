@@ -8,7 +8,7 @@ state or credentials.
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ## Before opening a pull request
@@ -16,7 +16,7 @@ pip install -r requirements.txt
 Run the public validation suite:
 
 ```bash
-python -m compileall -q scripts
+python -m compileall -q prouse scripts
 python -m unittest discover -s scripts -p 'test_*.py'
 python scripts/release_check.py
 ```

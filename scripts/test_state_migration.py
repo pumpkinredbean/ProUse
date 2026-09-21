@@ -53,7 +53,8 @@ class StateMigrationTests(unittest.TestCase):
             migrate(self.registry, 'project', self.source)
 
     def test_legacy_single_root_api_reads_and_retries_old_receipt(self):
-        broker = TaskBroker(self.root, self.source)
+        broker = TaskBroker(self.root, self.source, profile={
+            'id': 'standard', 'model': 'gpt-5.6-sol', 'reasoning_effort': 'xhigh'})
         self.assertEqual(broker.get('old-task')['workspace_id'], 'legacy')
         self.assertTrue(broker.submit(self.request)['duplicate_submission'])
         with self.assertRaises(OrchestratorError):

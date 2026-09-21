@@ -3,13 +3,13 @@
   "server_name": "ProUse",
   "state_dir": ".state/orchestrator",
   "default_worker_profile": "standard",
-  "model_capabilities": {"gpt-5.6-sol": ["high", "xhigh"]},
+  "model_capabilities": {"gpt-5-codex": ["high"]},
   "worker_profiles": [
-    {"id": "standard", "label": "Standard", "model": "gpt-5.6-sol", "reasoning_effort": "xhigh",
+    {"id": "standard", "label": "Standard", "model": "gpt-5-codex", "reasoning_effort": "high",
      "access": "full_access"},
-    {"id": "quick", "label": "Short tasks", "model": "gpt-5.6-sol", "reasoning_effort": "high",
+    {"id": "quick", "label": "Short tasks", "model": "gpt-5-codex", "reasoning_effort": "high",
      "access": "full_access"},
-    {"id": "sandboxed", "label": "Sandboxed", "model": "gpt-5.6-sol", "reasoning_effort": "high",
+    {"id": "sandboxed", "label": "Sandboxed", "model": "gpt-5-codex", "reasoning_effort": "high",
      "access": "workspace_sandbox"}
   ],
   "workspaces": [

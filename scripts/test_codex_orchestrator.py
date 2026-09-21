@@ -23,7 +23,7 @@ class CodexOrchestratorTests(unittest.TestCase):
             #!/usr/bin/env python3
             import json, pathlib, sys
             args = sys.argv[1:]
-            assert args[args.index('--model') + 1] == 'gpt-5.6-sol'
+            assert args[args.index('--model') + 1] == 'gpt-5-codex'
             assert 'sandbox_mode="danger-full-access"' in args
             assert 'shell_environment_policy.inherit="all"' in args
             assert not any(a.startswith('default_permissions=') for a in args)
@@ -40,7 +40,7 @@ class CodexOrchestratorTests(unittest.TestCase):
                 'blockers': []
             }))
             print(json.dumps({'type': 'thread.started', 'thread_id': 'thread-gpt56sol-test'}))
-            print(json.dumps({'type': 'turn_context', 'payload': {'model': 'gpt-5.6-sol', 'effort': 'xhigh'}}))
+            print(json.dumps({'type': 'turn_context', 'payload': {'model': 'gpt-5-codex', 'effort': 'high'}}))
             print(json.dumps({'type': 'turn.completed', 'usage': {'input_tokens': 10, 'output_tokens': 5}}))
         """))
         self.fake.chmod(0o755)
@@ -63,7 +63,7 @@ class CodexOrchestratorTests(unittest.TestCase):
 
     def test_independent_fixed_model_task_and_receipt(self):
         submitted = self.broker.submit(self.request)
-        self.assertEqual(submitted["worker_model"], "gpt-5.6-sol")
+        self.assertEqual(submitted["worker_model"], "gpt-5-codex")
         deadline = time.monotonic() + 10
         while True:
             result = self.broker.get("R011-test", wait_seconds=1)
@@ -77,7 +77,7 @@ class CodexOrchestratorTests(unittest.TestCase):
         self.assertEqual(result["summary"], "completed fake task")
         captured = next((self.root / ".state/orchestrator/tasks").glob("*/captured-prompt.txt")).read_text()
         self.assertIn("upper orchestrator owns research judgment", captured)
-        self.assertIn('"worker_model": "gpt-5.6-sol"', captured)
+        self.assertIn('"worker_model": "gpt-5-codex"', captured)
 
     def test_retry_is_idempotent_and_changed_request_is_rejected(self):
         self.broker.submit(self.request)

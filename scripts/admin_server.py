@@ -19,6 +19,7 @@ import sys
 import time
 import tomllib
 import urllib.request
+from importlib import resources
 
 import jsonschema
 from admin_control import administration_lock, admission_paused
@@ -633,7 +634,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.command == 'GET' and path in ('/', '/app.js', '/style.css'):
                 filename = {'/': 'index.html', '/app.js': 'app.js', '/style.css': 'style.css'}[path]
                 content_type = {'/': 'text/html; charset=utf-8', '/app.js': 'text/javascript; charset=utf-8', '/style.css': 'text/css; charset=utf-8'}[path]
-                self.reply((Path(__file__).parent / 'admin_ui' / filename).read_bytes(), content_type=content_type)
+                asset = resources.files('prouse_assets').joinpath('admin_ui', filename)
+                self.reply(asset.read_bytes(), content_type=content_type)
                 return
             if self.command == 'GET' and path == '/healthz':
                 self.reply({'status': 'ready'})

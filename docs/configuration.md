@@ -1,5 +1,16 @@
 # Configuration
 
+For normal installations, let the CLI create and validate the registry without erasing
+existing entries:
+
+```bash
+prouse setup --workspace "/absolute/path/to/project" --no-input --json
+```
+
+The default registry is `~/.prouse/config/workspace-registry.json`, runtime state stays
+under `~/.prouse/.state/`, and `PROUSE_HOME` relocates the whole instance. The lower-level
+schema details below remain useful for Admin-managed advanced configuration.
+
 ProUse separates **which projects exist** from **which files are exposed**.
 The workspace registry is private operator configuration; each workspace can point to a
 separate context policy.

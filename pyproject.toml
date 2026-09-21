@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "prouse"
+version = "0.2.0"
+description = "Local MCP control layer for approved project workspaces"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{name = "ProUse contributors"}]
+dependencies = [
+  "mcp==1.30.0",
+  "jsonschema==4.26.0",
+]
+
+[project.scripts]
+prouse = "prouse.cli:main"
+
+[project.urls]
+Repository = "https://github.com/pumpkinredbean/ProUse"
+
+[tool.setuptools]
+packages = ["prouse", "prouse.examples", "prouse_assets", "prouse_assets.admin_ui"]
+py-modules = [
+  "admin_control",
+  "admin_server",
+  "advisor_wait",
+  "codex_app_server",
+  "codex_orchestrator",
+  "context_server",
+  "context_store",
+  "direct_execution",
+  "workspace_discovery",
+  "workspace_registry",
+]
+package-dir = {"" = "scripts", "prouse" = "prouse", "prouse.examples" = "prouse/examples", "prouse_assets" = "prouse_assets", "prouse_assets.admin_ui" = "prouse_assets/admin_ui"}
+
+[tool.setuptools.package-data]
+prouse = ["examples/*.json"]
+prouse_assets = ["admin_ui/*.html", "admin_ui/*.js", "admin_ui/*.css"]

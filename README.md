@@ -10,6 +10,34 @@ execution behind one workspace registry with durable receipts.
 ProUse is for developers who want a strong interactive model to remain the
 research and orchestration layer while local tools perform mechanical work.
 
+## Install
+
+Ask a local coding agent:
+
+> Read the official ProUse repository's `docs/install-for-agents.md`. Install or
+> update ProUse, preserve my existing settings, configure this project, start and
+> verify it, then report the dashboard and connection readiness plus the stop and
+> restart commands. Ask me only for browser sign-in or connection approval that I
+> must complete.
+
+Or, from this checkout, run the real one-command user install (no venv activation):
+
+```bash
+sh install.sh --source .
+```
+
+Then configure an existing project and run ProUse:
+
+```bash
+prouse setup --workspace "/absolute/path/to/project" --no-input
+prouse start
+```
+
+The installer uses an isolated `uv` tool environment. It can also select an official
+Git ref with `--source https://github.com/pumpkinredbean/ProUse.git --ref REF`; do not
+use that route for this unmerged candidate. Configuration and logs live under
+`~/.prouse` (or `PROUSE_HOME`) and survive tool updates.
+
 ## What it provides
 
 - **Multiple approved workspaces** with stable IDs instead of arbitrary filesystem roots.
@@ -51,74 +79,46 @@ and your own MCP client or transport.
 ## Requirements
 
 - Python **3.11+**
+- `uv` for the one-command isolated user install
 - Codex CLI / app-server for worker and direct-execution features
 - an MCP-capable client
 - your own supported model/subscription access
 
-## Quick start
+## Everyday commands
+
+`prouse start` stays in the foreground and Ctrl-C cleans up its owned state. A second
+start reports the existing instance rather than creating a duplicate.
 
 ```bash
-git clone https://github.com/pumpkinredbean/ProUse.git
-cd ProUse
-
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-
-mkdir -p .state
-cp examples/workspace-registry.example.json .state/workspace-registry.json
-cp examples/context-policy.example.json .state/context-policy.example.json
+prouse status --json
+prouse logs -f
+prouse doctor --json
+prouse restart
+prouse stop
 ```
 
-Edit `.state/workspace-registry.json` and replace the example workspace `root`
-with the absolute path of a real project. The example `context_policy` is resolved
-relative to the registry file, so the two copied example files work together.
-
-Validate configuration before starting the server:
-
-```bash
-python scripts/context_server.py \
-  --registry .state/workspace-registry.json \
-  --check-config
-```
-
-Start the MCP server over stdio:
-
-```bash
-python scripts/context_server.py --registry .state/workspace-registry.json
-```
-
-Start the optional local Admin UI in another terminal:
-
-```bash
-python scripts/admin_server.py \
-  --registry .state/workspace-registry.json \
-  --host 127.0.0.1 \
-  --port 8848
-```
-
-Then open `http://127.0.0.1:8848/`.
+For explicit login autostart on macOS or Linux, use `prouse service install`; inspect it
+with `prouse service status` and disable/remove it with `prouse service uninstall`.
+`prouse stop` stops only the process owned by the selected `PROUSE_HOME`; it does not
+disable autostart. Windows user-service integration is not currently supported.
 
 ## Connect an MCP client
 
-ProUse uses stdio transport. MCP client configuration differs by client, but the
-process to launch is simply your virtualenv Python plus `context_server.py` and the
-registry path. A generic configuration looks like:
+ProUse uses client-owned stdio transport. A generic local MCP configuration is:
 
 ```json
 {
-  "command": "/absolute/path/to/ProUse/.venv/bin/python",
-  "args": [
-    "/absolute/path/to/ProUse/scripts/context_server.py",
-    "--registry",
-    "/absolute/path/to/ProUse/.state/workspace-registry.json"
-  ]
+  "command": "/absolute/path/from-command-v/prouse",
+  "args": ["mcp", "serve"]
 }
 ```
 
-If your client requires a remote HTTPS MCP endpoint, put the stdio server behind an
-authenticated transport you control. The Admin UI is a separate local operator surface
-and is not the MCP endpoint.
+Do not detach that process: its stdin/stdout belong to the MCP client. ChatGPT requires
+a public HTTPS MCP endpoint or OpenAI's supported Secure MCP Tunnel; follow the current
+[connection instructions](https://developers.openai.com/plugins/deploy/connect-chatgpt/).
+Browser sign-in, connection selection, and authorization remain explicit user actions.
+The Admin dashboard is a separate operator surface and is never evidence that ChatGPT
+is connected. See [Install for agents](docs/install-for-agents.md) for the handoff.
 
 ## Recommended first interaction
 
@@ -152,7 +152,7 @@ making any component reachable beyond localhost.
 
 ## Agent skill
 
-`SKILL.md» is the agent-facing skill for this repository, with `agents/openai.yaml» as its
+`SKILL.md` is the agent-facing skill for this repository, with `agents/openai.yaml` as its
 metadata. It describes the advisor workflow this project exists for: keep the upper model in the
 research and orchestration role, use the context tools for evidence, delegate bounded work to
 independent Codex workers, run exact host commands directly when another model turn adds nothing,
@@ -161,6 +161,7 @@ and keep each round alive with the wait/wake protocol.
 ## Documentation
 
 - [Configuration](docs/configuration.md)
+- [Install for agents](docs/install-for-agents.md)
 - [MCP tools](docs/mcp-tools.md)
 - [Direct execution](docs/direct-execution.md)
 - [Security model](docs/security-model.md)
@@ -177,14 +178,15 @@ scripts/context_store.py     scoped filesystem context implementation
 scripts/codex_orchestrator.py delegated worker broker
 scripts/direct_execution.py  direct command controller
 scripts/admin_server.py      local Admin server
-scripts/admin_ui/            local Admin interface
+prouse/                      installed command and packaged examples
+prouse_assets/admin_ui/      packaged local Admin interface
 scripts/test_*.py            regression tests
 ```
 
 ## Tests
 
 ```bash
-python -m compileall -q scripts
+python -m compileall -q prouse scripts
 python -m unittest discover -s scripts -p 'test_*.py'
 python scripts/release_check.py
 ```
