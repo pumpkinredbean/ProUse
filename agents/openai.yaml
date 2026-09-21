@@ -1,6 +1,6 @@
 interface:
   display_name: "ProUse"
   short_description: "Use Pro models across your local workspaces."
-  default_prompt: "$pro-advisor로 기존 Pro 세션에 현재 쟁점을 검토받고 검증 결과를 작업 상태에 반영해줘."
+  default_prompt: "Use $pro-advisor to review the current issue with the existing Pro conversation and fold the verified results into the task state."
 policy:
   allow_implicit_invocation: true
