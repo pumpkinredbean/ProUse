@@ -327,7 +327,7 @@ function policyEdit(id) {
   };
   modal(
     "읽기 정책 편집",
-    `<form><label>정책 이름<input name="name" value="${esc(p.name || id)}" required maxlength="120"></label><label>개별 파일<textarea name="files" class="mono" placeholder="README.md">${esc((p.files || []).join("\n"))}</textarea><span>워크스페이스 상대 경로를 한 줄에 하나씩 입력하세요.</span></label><label>디렉터리와 확장자<textarea name="dirs" class="mono" placeholder="src | .py, .md">${esc((p.directories || []).map((d) => d.path + " | " + d.extensions.join(", ")).join("\n"))}</textarea><span>한 줄에 디렉터리 | 확장자 목록. 예: src | .py, .md</span></label><label><input type="checkbox" name="remove">이 워크스페이스의 컨텍스트 공개 중지</label><p class="muted">비밀 파일, 런타임 디렉터리, 심볼릭 링크와 경로 이탈 차단은 정책으로 해제할 수 없습니다.</p>${footer()}</form>`,
+    `<form><label>정책 이름<input name="name" value="${esc(p.name || id)}" required maxlength="120"></label><label>개별 파일<textarea name="files" class="mono" placeholder="README.md">${esc((p.files || []).join("\n"))}</textarea><span>워크스페이스 상대 경로를 한 줄에 하나씩 입력하세요.</span></label><label>디렉터리와 확장자<textarea name="dirs" class="mono" placeholder="src | .py, .md">${esc((p.directories || []).map((d) => d.path + " | " + d.extensions.join(", ")).join("\n"))}</textarea><span>한 줄에 디렉터리 | 확장자 목록. 예: src | .py, .md (Dockerfile·Makefile 같은 확장자 없는 파일도 포함되며, 루트 전체는 . 로 지정합니다)</span></label><label><input type="checkbox" name="remove">이 워크스페이스의 컨텍스트 공개 중지</label><p class="muted">비밀 파일, 런타임 디렉터리, 심볼릭 링크와 경로 이탈 차단은 정책으로 해제할 수 없습니다.</p>${footer()}</form>`,
     async (f) => {
       const next = structuredClone(data.bundle);
       if (f.has("remove")) delete next.policies[id];

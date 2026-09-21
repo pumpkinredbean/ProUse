@@ -1,8 +1,10 @@
 .state/
 .venv/
+.verify-venv/
 venv/
 .env
 .env.*
+!.env.example
 *.pem
 *.key
 *.p12
@@ -10,7 +12,12 @@ venv/
 *.log
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
 .DS_Store
+.idea/
+.vscode/
 artifacts/
 dist/
 build/
