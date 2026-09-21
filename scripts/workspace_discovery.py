@@ -29,7 +29,9 @@ THREAD_SOURCES = [
 
 
 def _is_private_or_ephemeral(path: Path) -> bool:
-    codex_home = Path(os.environ.get("CODEX_HOME", str(Path.home() / ".codex"))).resolve()
+    default_codex_home = (Path.home() / ".codex").resolve()
+    configured_codex_home = Path(os.environ.get("CODEX_HOME", str(default_codex_home))).resolve()
+    codex_roots = {default_codex_home, configured_codex_home}
     temp_roots = {Path(tempfile.gettempdir()).resolve()}
     for value in ("/tmp", "/private/tmp", "/var/tmp", "/private/var/tmp"):
         try:
@@ -38,7 +40,7 @@ def _is_private_or_ephemeral(path: Path) -> bool:
             pass
     if any(path == root or path.is_relative_to(root) for root in temp_roots):
         return True
-    if path == codex_home or path.is_relative_to(codex_home):
+    if any(path == root or path.is_relative_to(root) for root in codex_roots):
         return True
     return ".state" in path.parts
 
