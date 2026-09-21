@@ -29,7 +29,7 @@ const names = {
   overview: "운영 현황",
   workspaces: "워크스페이스",
   profiles: "위임 워커 프로필",
-  policies: "읽기 정책",
+  policies: "컨텍스트 정책",
   tasks: "위임 작업",
   executions: "직접 실행",
   connection: "연결 · 진단",
@@ -124,7 +124,7 @@ function render() {
       )
       .join(
         "",
-      )}</nav><div class="sidebar-footer">로컬 운영자 전용<br>Admin 권한은 MCP에 노출되지 않습니다.<br>저장한 설정은 즉시 적용됩니다.</div></aside><main class="main"><div class="topbar"><span class="eyebrow">CONTROL / ${esc(names[tab])}</span><div class="actions">${health(data.runtime.ready, "MCP 터널")}${button("새로고침", "refresh")}</div></div>${data.paused ? '<div class="notice">신규 위임과 직접 command가 중지되어 있습니다. 기존 직접 operation의 조회와 취소는 유지됩니다.</div>' : ""}<div class="title-row"><div><h1>${names[tab]}</h1><p class="muted">${{ overview: "위임 작업과 Pro가 직접 제어하는 실행을 구분해 실제 상태를 확인합니다.", workspaces: "실행할 프로젝트와 위임 워커 기본 프로필을 명시적으로 승인합니다.", profiles: "위임 워커의 모델과 추론 수준을 관리합니다.", policies: "상위 모델에 공개할 파일을 한정하고 저장 즉시 적용합니다.", tasks: "독립 워커의 모델·thread 출처와 결과를 확인합니다.", executions: "command·출력·diff 영수증을 확인하고 직접 operation을 취소합니다.", connection: "MCP와 직접 실행 runtime을 실제 로컬 진단으로 확인합니다.", history: "설정 적용과 운영 조작을 추적하고 이전 설정을 복구합니다." }[tab]}</p></div>${tab === "workspaces" ? button("+ 워크스페이스", "workspace-add", "primary") : tab === "profiles" ? button("+ 워커 프로필", "profile-add", "primary") : ""}</div>${{ overview: () => overview(active), workspaces, profiles, policies, tasks, executions, connection, history: historyView }[tab]()}</main></div>`;
+      )}</nav><div class="sidebar-footer">로컬 운영자 전용<br>Admin 설정 권한은 MCP에 노출되지 않습니다.<br>저장한 설정은 즉시 적용됩니다.</div></aside><main class="main"><div class="topbar"><span class="eyebrow">CONTROL / ${esc(names[tab])}</span><div class="actions">${health(data.runtime.ready, "MCP 터널")}${button("새로고침", "refresh")}</div></div>${data.paused ? '<div class="notice">신규 위임·직접 command·파일 변경이 중지되어 있습니다. 컨텍스트와 기존 operation 조회 및 취소는 유지됩니다.</div>' : ""}<div class="title-row"><div><h1>${names[tab]}</h1><p class="muted">${{ overview: "위임 작업과 Pro가 직접 제어하는 실행을 구분해 실제 상태를 확인합니다.", workspaces: "실행할 프로젝트와 위임 워커 기본 프로필을 명시적으로 승인합니다.", profiles: "위임 워커의 모델과 추론 수준을 관리합니다.", policies: "상위 모델이 읽고 파일 도구로 변경할 범위를 한정하며 저장 즉시 적용합니다.", tasks: "독립 워커의 모델·thread 출처와 결과를 확인합니다.", executions: "command·출력·diff 영수증을 확인하고 직접 operation을 취소합니다.", connection: "MCP와 직접 실행 runtime을 실제 로컬 진단으로 확인합니다.", history: "설정 적용과 운영 조작을 추적하고 이전 설정을 복구합니다." }[tab]}</p></div>${tab === "workspaces" ? button("+ 워크스페이스", "workspace-add", "primary") : tab === "profiles" ? button("+ 워커 프로필", "profile-add", "primary") : ""}</div>${{ overview: () => overview(active), workspaces, profiles, policies, tasks, executions, connection, history: historyView }[tab]()}</main></div>`;
 }
 function overview(active) {
   const ws = data.bundle.config.workspaces,
@@ -149,7 +149,7 @@ function policies() {
     data.bundle.config.workspaces
       .map((w) => {
         const p = data.bundle.policies[w.id];
-        return `<section class="card"><div class="title-row"><div><h2>${esc(w.label)}</h2><small class="mono">${esc(w.id)}</small></div><div class="actions">${button("정책 편집", "policy-edit", "", `data-id="${esc(w.id)}"`)}${button("접근 범위 미리보기", "policy-preview", "", `data-id="${esc(w.id)}" ${p ? "" : "disabled"}`)}</div></div>${p ? `<div class="split"><div><h3>개별 파일 · ${(p.files || []).length}</h3><pre class="detail">${esc((p.files || []).join("\n") || "없음")}</pre></div><div><h3>디렉터리 · ${(p.directories || []).length}</h3>${(p.directories || []).map((d) => `<div class="list-item"><div><strong class="mono">${esc(d.path)}</strong><small>${esc(d.extensions.join(" · "))}</small></div></div>`).join("") || '<p class="muted">없음</p>'}</div></div>` : '<p class="muted">컨텍스트를 공개하지 않습니다. 정책을 추가하면 지정된 파일만 읽을 수 있습니다.</p>'}</section>`;
+        return `<section class="card"><div class="title-row"><div><h2>${esc(w.label)}</h2><small class="mono">${esc(w.id)}</small></div><div class="actions">${button("정책 편집", "policy-edit", "", `data-id="${esc(w.id)}"`)}${button("접근 범위 미리보기", "policy-preview", "", `data-id="${esc(w.id)}" ${p ? "" : "disabled"}`)}</div></div>${p ? `<div class="split"><div><h3>개별 파일 · ${(p.files || []).length}</h3><pre class="detail">${esc((p.files || []).join("\n") || "없음")}</pre></div><div><h3>디렉터리 · ${(p.directories || []).length}</h3>${(p.directories || []).map((d) => `<div class="list-item"><div><strong class="mono">${esc(d.path)}</strong><small>${esc(d.extensions.join(" · "))}</small></div></div>`).join("") || '<p class="muted">없음</p>'}</div></div>` : '<p class="muted">컨텍스트를 공개하지 않습니다. 정책을 추가하면 읽기와 파일 변경이 지정된 범위로 제한됩니다.</p>'}</section>`;
       })
       .join("") ||
     '<div class="card empty">워크스페이스를 먼저 등록하세요.</div>'
@@ -227,7 +227,7 @@ async function workspaceEdit(id) {
     .join("");
   modal(
     id ? "워크스페이스 수정" : "워크스페이스 등록",
-    `<form><div class="row"><label>안정적인 ID<input name="id" value="${esc(w.id)}" pattern="[a-z][a-z0-9_-]{0,63}" required ${id ? "readonly" : ""}><span>영문 소문자로 시작, 숫자·밑줄·하이픈 사용</span></label><label>이름<input name="label" value="${esc(w.label)}" required maxlength="120"></label></div><div class="workspace-picker"><label>최근 Codex 워크스페이스<select id="workspace-candidate"><option value="">선택하세요</option>${options}</select></label><div class="actions">${button("선택한 경로 사용", "workspace-candidate-use")}${button("폴더에서 찾기", "workspace-browse", "", `data-id="${esc(id || "")}"`)}</div>${discovery.message ? `<p class="muted">${esc(discovery.message)}</p>` : '<p class="muted">Codex에서 최근 사용한 프로젝트를 불러왔습니다. 경로를 직접 입력할 필요가 없습니다.</p>'}<div id="workspace-browser"></div></div><label>선택된 프로젝트 루트<input name="root" value="${esc(w.root)}" placeholder="위 목록이나 폴더 탐색에서 선택" required><span>직접 붙여넣기도 가능합니다. 같은 실제 경로와 상하위 경로도 별도 ID로 등록할 수 있습니다.</span></label><label>기본 워커 프로필<select name="profile"><option value="">전역 기본값 사용</option>${data.bundle.config.worker_profiles.map((p) => `<option value="${esc(p.id)}" ${p.id === w.default_worker_profile ? "selected" : ""}>${esc(p.label || p.id)} · ${esc(p.id)}</option>`).join("")}</select></label><label><input type="checkbox" name="enabled" ${w.enabled ? "checked" : ""}>실행과 컨텍스트 조회 활성화</label><label><input type="checkbox" name="default" ${data.bundle.config.default_workspace_id === w.id ? "checked" : ""}>기본 워크스페이스로 사용</label>${id ? button("삭제", "workspace-delete", "danger", `data-id="${esc(id)}" type="button"`) : '<p class="muted">등록 후 읽기 정책에서 공개할 파일을 지정하세요.</p>'}${footer()}</form>`,
+    `<form><div class="row"><label>안정적인 ID<input name="id" value="${esc(w.id)}" pattern="[a-z][a-z0-9_-]{0,63}" required ${id ? "readonly" : ""}><span>영문 소문자로 시작, 숫자·밑줄·하이픈 사용</span></label><label>이름<input name="label" value="${esc(w.label)}" required maxlength="120"></label></div><div class="workspace-picker"><label>최근 Codex 워크스페이스<select id="workspace-candidate"><option value="">선택하세요</option>${options}</select></label><div class="actions">${button("선택한 경로 사용", "workspace-candidate-use")}${button("폴더에서 찾기", "workspace-browse", "", `data-id="${esc(id || "")}"`)}</div>${discovery.message ? `<p class="muted">${esc(discovery.message)}</p>` : '<p class="muted">Codex에서 최근 사용한 프로젝트를 불러왔습니다. 경로를 직접 입력할 필요가 없습니다.</p>'}<div id="workspace-browser"></div></div><label>선택된 프로젝트 루트<input name="root" value="${esc(w.root)}" placeholder="위 목록이나 폴더 탐색에서 선택" required><span>직접 붙여넣기도 가능합니다. 같은 실제 경로와 상하위 경로도 별도 ID로 등록할 수 있습니다.</span></label><label>기본 워커 프로필<select name="profile"><option value="">전역 기본값 사용</option>${data.bundle.config.worker_profiles.map((p) => `<option value="${esc(p.id)}" ${p.id === w.default_worker_profile ? "selected" : ""}>${esc(p.label || p.id)} · ${esc(p.id)}</option>`).join("")}</select></label><label><input type="checkbox" name="enabled" ${w.enabled ? "checked" : ""}>실행과 컨텍스트 도구 활성화</label><label><input type="checkbox" name="default" ${data.bundle.config.default_workspace_id === w.id ? "checked" : ""}>기본 워크스페이스로 사용</label>${id ? button("삭제", "workspace-delete", "danger", `data-id="${esc(id)}" type="button"`) : '<p class="muted">등록 후 컨텍스트 정책에서 읽고 변경할 파일 범위를 지정하세요.</p>'}${footer()}</form>`,
     async (f) => {
       const next = structuredClone(data.bundle);
       let nw = {
@@ -326,8 +326,8 @@ function policyEdit(id) {
     directories: [],
   };
   modal(
-    "읽기 정책 편집",
-    `<form><label>정책 이름<input name="name" value="${esc(p.name || id)}" required maxlength="120"></label><label>개별 파일<textarea name="files" class="mono" placeholder="README.md">${esc((p.files || []).join("\n"))}</textarea><span>워크스페이스 상대 경로를 한 줄에 하나씩 입력하세요.</span></label><label>디렉터리와 확장자<textarea name="dirs" class="mono" placeholder="src | .py, .md">${esc((p.directories || []).map((d) => d.path + " | " + d.extensions.join(", ")).join("\n"))}</textarea><span>한 줄에 디렉터리 | 확장자 목록. 예: src | .py, .md (Dockerfile·Makefile 같은 확장자 없는 파일도 포함되며, 루트 전체는 . 로 지정합니다)</span></label><label><input type="checkbox" name="remove">이 워크스페이스의 컨텍스트 공개 중지</label><p class="muted">비밀 파일, 런타임 디렉터리, 심볼릭 링크와 경로 이탈 차단은 정책으로 해제할 수 없습니다.</p>${footer()}</form>`,
+    "컨텍스트 정책 편집",
+    `<form><label>정책 이름<input name="name" value="${esc(p.name || id)}" required maxlength="120"></label><label>개별 파일<textarea name="files" class="mono" placeholder="README.md">${esc((p.files || []).join("\n"))}</textarea><span>워크스페이스 상대 경로를 한 줄에 하나씩 입력하세요.</span></label><label>디렉터리와 확장자<textarea name="dirs" class="mono" placeholder="src | .py, .md">${esc((p.directories || []).map((d) => d.path + " | " + d.extensions.join(", ")).join("\n"))}</textarea><span>한 줄에 디렉터리 | 확장자 목록. 예: src | .py, .md (Dockerfile·Makefile 같은 확장자 없는 파일도 포함되며, 루트 전체는 . 로 지정합니다)</span></label><label><input type="checkbox" name="remove">이 워크스페이스의 컨텍스트 도구 중지</label><p class="muted">이 허용 범위는 조회뿐 아니라 MCP write/edit/delete에도 동일하게 적용됩니다. 비밀 파일·내용, 런타임 디렉터리, 심볼릭 링크·하드링크와 경로 이탈 차단은 정책으로 해제할 수 없습니다.</p>${footer()}</form>`,
     async (f) => {
       const next = structuredClone(data.bundle);
       if (f.has("remove")) delete next.policies[id];
@@ -361,7 +361,7 @@ function policyEdit(id) {
           directories,
         };
       }
-      await applyBundle(next, "읽기 정책을 저장하고 즉시 적용했습니다.");
+      await applyBundle(next, "컨텍스트 정책을 저장하고 즉시 적용했습니다.");
     },
   );
 }
@@ -529,7 +529,7 @@ document.addEventListener("click", async (e) => {
       const version = await api("/api/revisions/" + id);
       modal(
         "이전 설정 복구",
-        `<p class="mono">${esc(id)}</p><p>워크스페이스·프로필·읽기 정책을 아래 설정으로 복구합니다. 작업 이력과 워커 산출물은 보존됩니다.</p><pre class="detail">${esc(pretty(version.bundle))}</pre><footer>${button("닫기", "close")}${button("이 버전으로 복구", "rollback-confirm", "primary", `data-id="${id}"`)}</footer>`,
+        `<p class="mono">${esc(id)}</p><p>워크스페이스·프로필·컨텍스트 정책을 아래 설정으로 복구합니다. 작업 이력과 워커 산출물은 보존됩니다.</p><pre class="detail">${esc(pretty(version.bundle))}</pre><footer>${button("닫기", "close")}${button("이 버전으로 복구", "rollback-confirm", "primary", `data-id="${id}"`)}</footer>`,
       );
     } else if (a === "rollback-confirm") {
       busy = true;

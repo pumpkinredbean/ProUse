@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 from context_store import (ContextError, ContextStore, MAX_FILE_BYTES, MAX_OUTPUT_CHARS, digest, encoded)
 
@@ -42,6 +43,21 @@ class ContextStoreTests(unittest.TestCase):
         self.assertEqual(change["previous_sha256"], known["src/a.rs"])
         self.assertNotIn("text", change)
 
+    def test_view_changes_when_a_file_is_replaced_with_same_size_and_mtime(self):
+        index = self.store.index()
+        path = self.root / "src/a.rs"
+        before = path.stat()
+        replacement = self.root / "replacement.tmp"
+        data = bytearray(path.read_bytes())
+        data[0] = ord("X")
+        replacement.write_bytes(data)
+        os.utime(replacement, ns=(before.st_atime_ns, before.st_mtime_ns))
+        os.replace(replacement, path)
+        self.assertEqual(path.stat().st_size, before.st_size)
+        self.assertEqual(path.stat().st_mtime_ns, before.st_mtime_ns)
+        result = self.store.search(["causal_signal"], expected_view_id=index["view_id"])
+        self.assertEqual(result["status"], "changed_view")
+
     def test_scope_and_traversal_denied(self):
         (self.root / "outside.md").write_text("private")
         for path in ("../outside.md", "/etc/passwd", "src/../outside.md", "outside.md", "src/.env", "src/a.pem", "src/credentials.rs"):
@@ -79,12 +95,25 @@ class ContextStoreTests(unittest.TestCase):
         (self.root / "src/large.rs").write_bytes(b"a" * (MAX_FILE_BYTES + 1))
         self.assertEqual(self.store.read([{"path": "src/unsafe.rs"}])["files"][0]["status"], "unavailable")
         self.assertEqual(self.store.search(["sk-"])["matches"], [])
+        self.assertEqual(self.store.read_bytes("src/unsafe.rs", limit=1)["status"], "unavailable")
         self.assertNotIn("x" * 35, encoded(self.store.index()))
         large = self.store.read([{"path": "src/large.rs", "start_line": 1, "end_line": 1}])["files"][0]
         self.assertEqual(large["status"], "line_too_long")
         window = self.store.read_bytes("src/large.rs", offset=0, limit=8)
         self.assertEqual(window["text"], "a" * 8)
         self.assertEqual(window["bytes"], MAX_FILE_BYTES + 1)
+
+    def test_python_search_fallback_blocks_a_secret_late_in_a_large_file(self):
+        body = "needle\n" + "a" * (MAX_FILE_BYTES + 100) + "\nsk-" + "x" * 35 + "\n"
+        (self.root / "src/large-late.rs").write_text(body)
+        with mock.patch("context_store.RG", None):
+            result = self.store.search(["needle"])
+        self.assertEqual(result["matches"], [])
+        blocked = next(item for item in result["skipped_files"] if item["path"] == "src/large-late.rs")
+        self.assertIn("Credential-shaped", blocked["reason"])
+        ranged = self.store.read([{"path": "src/large-late.rs", "start_line": 1, "end_line": 1}])
+        self.assertEqual(ranged["files"][0]["status"], "unavailable")
+        self.assertEqual(self.store.read_bytes("src/large-late.rs", limit=1)["status"], "unavailable")
 
     def test_large_file_line_and_byte_reads(self):
         body = "head\n" + "x" * 700_000 + "\ntail\n"
@@ -152,6 +181,9 @@ class ContextStoreTests(unittest.TestCase):
         self.assertEqual([item["path"] for item in store.grep("match_here", output_mode="files")["files"]],
                          ["src/tail.rs"])
         self.assertEqual(store.grep("match_here")["matches"][0]["line"], 1)
+        with mock.patch("context_store.RG", None):
+            fallback = store.grep("match_here", output_mode="files")
+        self.assertEqual([item["path"] for item in fallback["files"]], ["src/tail.rs"])
         with self.assertRaises(ContextError):
             store.grep("(")
 
@@ -232,6 +264,29 @@ class ContextStoreTests(unittest.TestCase):
         self.assertEqual(result["unchanged_files"], 1)
         self.assertEqual(result["total_changes"], 1)
 
+    def test_change_pages_cover_added_modified_and_deleted_paths(self):
+        (self.root / "src/old.rs").write_text("old\n")
+        index = self.store.index()
+        known = {item["path"]: item["sha256"] for item in index["files"]}
+        (self.root / "src/a.rs").write_text("changed\n")
+        (self.root / "src/old.rs").unlink()
+        (self.root / "src/new.rs").write_text("new\n")
+        found = {"added": [], "modified": [], "deleted": []}
+        offset = 0
+        pages = 0
+        while True:
+            page = self.store.changes(known, offset=offset, limit=1)
+            for key in found:
+                found[key].extend(item["path"] for item in page[key])
+            pages += 1
+            if page["next_offset"] is None:
+                break
+            self.assertGreater(page["next_offset"], offset)
+            offset = page["next_offset"]
+        self.assertEqual(found, {"added": ["src/new.rs"], "modified": ["src/a.rs"],
+                                 "deleted": ["src/old.rs"]})
+        self.assertEqual(pages, 3)
+
     def test_write_file_creates_and_overwrites_inside_the_policy(self):
         created = self.store.write_file("src/new.rs", "fn added() {}\n")
         self.assertEqual(created["status"], "ok")
@@ -251,6 +306,30 @@ class ContextStoreTests(unittest.TestCase):
                 self.store.write_file(path, "x\n")
         with self.assertRaises(ContextError):
             self.store.write_file("src/secret.rs", "sk-" + "x" * 35)
+
+    def test_write_file_does_not_overwrite_a_file_created_during_the_create_race(self):
+        original = self.store._commit
+
+        def create_racer(path, data, expected_identity, create):
+            (self.root / path).write_text("racer\n")
+            return original(path, data, expected_identity, create)
+
+        with mock.patch.object(self.store, "_commit", side_effect=create_racer):
+            with self.assertRaises(ContextError):
+                self.store.write_file("src/race.rs", "requested\n")
+        self.assertEqual((self.root / "src/race.rs").read_text(), "racer\n")
+
+    def test_existing_secret_content_cannot_be_overwritten_edited_or_deleted(self):
+        path = self.root / "src/unsafe.rs"
+        content = "prefix sk-" + "x" * 35 + "\n"
+        path.write_text(content)
+        with self.assertRaises(ContextError):
+            self.store.write_file("src/unsafe.rs", "replacement\n")
+        with self.assertRaises(ContextError):
+            self.store.edit_file("src/unsafe.rs", [{"old": "prefix", "new": "other"}])
+        with self.assertRaises(ContextError):
+            self.store.delete_file("src/unsafe.rs")
+        self.assertEqual(path.read_text(), content)
 
     def test_edit_file_applies_exact_replacements(self):
         before = digest((self.root / "src/a.rs").read_bytes())

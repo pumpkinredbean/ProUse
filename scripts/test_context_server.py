@@ -1,3 +1,4 @@
+import fcntl
 import json
 from pathlib import Path
 import sys
@@ -10,6 +11,7 @@ from contextlib import asynccontextmanager
 from functools import wraps
 
 from test_task_broker_v2 import FAKE
+from workspace_registry import Registry
 
 
 TOOLS = {'list_workspaces', 'inspect_workspace', 'list_worker_profiles', 'resolve_execution_context',
@@ -76,6 +78,7 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(tool.annotations.readOnlyHint, tool.name not in {
                 'submit_codex_worker_task', 'exec_command', 'write_execution_stdin', 'cancel_execution',
                 'write_file', 'edit_file', 'delete_file'})
+            self.assertEqual(tool.annotations.destructiveHint, not tool.annotations.readOnlyHint)
         workspaces = await self.call('list_workspaces', {})
         self.assertEqual([w['workspace_id'] for w in workspaces['workspaces']], ['alpha', 'beta'])
         self.assertNotIn(str(self.base), json.dumps(workspaces))
@@ -132,6 +135,40 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(delta['deleted'], [])
 
     @connected
+    async def test_real_stdio_policy_scoped_file_mutations_and_hash_preconditions(self):
+        created = await self.call('write_file', {
+            'workspace_id': 'alpha', 'path': 'allowed/new.md', 'content': 'first\n'})
+        self.assertTrue(created['created'])
+        edited = await self.call('edit_file', {
+            'workspace_id': 'alpha', 'path': 'allowed/new.md',
+            'expected_sha256': created['sha256'], 'edits': [{'old': 'first', 'new': 'second'}]})
+        self.assertEqual(edited['replacements'], 1)
+        await self.call('write_file', {
+            'workspace_id': 'alpha', 'path': 'allowed/new.md', 'content': 'stale\n',
+            'expected_sha256': created['sha256']}, error=True)
+        read = await self.call('read_files', {
+            'workspace_id': 'alpha', 'requests': [{'path': 'allowed/new.md', 'sha256': edited['sha256']}]})
+        self.assertEqual(read['files'][0]['text'], '1: second')
+        deleted = await self.call('delete_file', {
+            'workspace_id': 'alpha', 'path': 'allowed/new.md', 'expected_sha256': edited['sha256']})
+        self.assertTrue(deleted['deleted'])
+        invalid_hash = await self.session.call_tool('delete_file', {
+            'workspace_id': 'alpha', 'path': 'allowed/note.md', 'expected_sha256': 'not-a-hash'})
+        self.assertTrue(invalid_hash.isError)
+
+    @connected
+    async def test_real_stdio_file_mutation_respects_the_shared_writer_lock(self):
+        registry = Registry.load(self.base / 'registry.json')
+        lock_path = registry.workspace('alpha')['writer_lock']
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open('a+b') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            blocked = await self.call('write_file', {
+                'workspace_id': 'alpha', 'path': 'allowed/locked.md', 'content': 'blocked\n'}, error=True)
+        self.assertEqual(blocked['error']['code'], 'request_rejected')
+        self.assertFalse((self.base / 'alpha/allowed/locked.md').exists())
+
+    @connected
     async def test_real_stdio_task_submission_and_durable_poll(self):
         request = {'workspace_id': 'alpha', 'worker_profile_id': 'standard', 'orchestrator_task_id': 'mcp-task',
                    'objective': 'write', 'allowed_paths': ['allowed'], 'max_seconds': 60}
@@ -167,6 +204,9 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
                    'objective': 'write', 'allowed_paths': ['allowed'], 'max_seconds': 60}
         value = await self.call('submit_codex_worker_task', {'request': request}, error=True)
         self.assertEqual(value['error']['code'], 'admission_paused')
+        write = await self.call('write_file', {
+            'workspace_id': 'alpha', 'path': 'allowed/paused.md', 'content': 'blocked\n'}, error=True)
+        self.assertEqual(write['error']['code'], 'admission_paused')
         await self.call('workspace_index', {'workspace_id': 'alpha'})
         (state / 'admission.json').write_text(json.dumps({'paused': False}))
         await self.call('submit_codex_worker_task', {'request': request})

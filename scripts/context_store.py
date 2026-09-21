@@ -7,7 +7,7 @@ detection, and exact file writes, edits and deletes.
 
 Discovery is stat-only, and no call reads or hashes the whole workspace. Content
 hashes are computed per file on demand and cached against the file identity
-(device, inode, size, mtime_ns), so a repeated read or search only re-reads bytes
+(device, inode, size, mtime_ns, ctime_ns), so a repeated read or search only re-reads bytes
 that actually changed. Every returned byte still passes the same path, symlink,
 hardlink, binary and credential-shaped-content checks.
 """
@@ -48,6 +48,7 @@ MAX_CONTEXT_LINES = 20
 MAX_CURSOR_CHARS = 512
 MAX_EDITS = 32
 CHUNK_BYTES = 65_536
+SECURITY_OVERLAP_BYTES = 128
 HASH_CACHE_LIMIT = 50_000
 RG = shutil.which("rg")
 RG_ARG_CHUNK = 400
@@ -261,6 +262,7 @@ class FileEntry(NamedTuple):
     path: str
     size: int
     mtime_ns: int
+    ctime_ns: int
     ino: int
     dev: int
 
@@ -388,7 +390,7 @@ class ContextStore:
             return None
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             return None
-        return FileEntry(path, info.st_size, info.st_mtime_ns, info.st_ino, info.st_dev)
+        return FileEntry(path, info.st_size, info.st_mtime_ns, info.st_ctime_ns, info.st_ino, info.st_dev)
 
     def _walk(self, base: str, extensions: set[str]) -> Iterator[FileEntry]:
         # Walk directory descriptors: never follow a symlink during discovery.
@@ -415,7 +417,8 @@ class ContextStore:
                         continue
                     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                         continue
-                    yield FileEntry(path, info.st_size, info.st_mtime_ns, info.st_ino, info.st_dev)
+                    yield FileEntry(path, info.st_size, info.st_mtime_ns, info.st_ctime_ns,
+                                    info.st_ino, info.st_dev)
         finally:
             os.close(directory_fd)
 
@@ -450,14 +453,16 @@ class ContextStore:
         hasher = hashlib.sha256()
         hasher.update(encoded([self.workspace_id, str(self.root), self.policy_hash]).encode())
         for entry in entries:
-            hasher.update(f"{entry.path}\0{entry.size}\0{entry.mtime_ns}\n".encode())
+            hasher.update(
+                f"{entry.path}\0{entry.dev}\0{entry.ino}\0{entry.size}\0{entry.mtime_ns}\0{entry.ctime_ns}\n".encode()
+            )
         return self.view_prefix + hasher.hexdigest()
 
     def _cached(self, path: str, info: os.stat_result):
-        identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+        identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
         return _cache_get(self.cache_prefix + (path,), identity), identity
 
-    def _probe(self, path: str, budget: _Budget) -> dict[str, Any]:
+    def _probe(self, path: str, budget: _Budget, expected_entry: FileEntry | None = None) -> dict[str, Any]:
         """Hash one file on demand. Returns metadata, an unavailable status, or a deferred hash."""
         try:
             fd, info = self._open_file(path)
@@ -465,10 +470,18 @@ class ContextStore:
             return {"status": "unavailable", "reason": _reason(exc), "sha256": None}
         try:
             cached, identity = self._cached(path, info)
+            if expected_entry is not None:
+                expected_identity = (expected_entry.dev, expected_entry.ino, expected_entry.size,
+                                     expected_entry.mtime_ns, expected_entry.ctime_ns)
+                if identity != expected_identity:
+                    return {"status": "unavailable", "reason": "File changed during the operation",
+                            "sha256": None, "_identity": identity}
             if cached is not None:
-                return {"sha256": cached[0], "lines": cached[1], "bytes": info.st_size, "hash_status": "ok"}
+                return {"sha256": cached[0], "lines": cached[1], "bytes": info.st_size,
+                        "hash_status": "ok", "_identity": identity}
             if not budget.take(info.st_size):
-                return {"sha256": None, "bytes": info.st_size, "hash_status": "deferred"}
+                return {"sha256": None, "bytes": info.st_size, "hash_status": "deferred",
+                        "_identity": identity}
             return self._digest(fd, info, identity, path)
         finally:
             os.close(fd)
@@ -494,28 +507,46 @@ class ContextStore:
         else:
             hasher = hashlib.sha256()
             lines = 0
-            head = b""
             last = b""
+            security_tail = b""
+            decoder = codecs.getincrementaldecoder("utf-8")("strict")
             while True:
                 chunk = os.read(fd, CHUNK_BYTES)
                 if not chunk:
                     break
-                if len(head) < 4096:
-                    head += chunk[:4096 - len(head)]
+                security_window = security_tail + chunk
+                if b"\0" in chunk:
+                    return {"status": "unavailable", "reason": "Binary content is not exposed",
+                            "sha256": None, "bytes": info.st_size}
+                if SECRET_CONTENT.search(security_window):
+                    return {"status": "unavailable",
+                            "reason": "Credential-shaped content blocked; inspect locally",
+                            "sha256": None, "bytes": info.st_size}
+                security_tail = security_window[-SECURITY_OVERLAP_BYTES:]
+                try:
+                    decoder.decode(chunk)
+                except UnicodeDecodeError:
+                    return {"status": "unavailable", "reason": "File is not valid UTF-8",
+                            "sha256": None, "bytes": info.st_size}
                 lines += chunk.count(b"\n")
                 last = chunk[-1:]
                 hasher.update(chunk)
             if last and last != b"\n":
                 lines += 1
-            if b"\0" in head:
-                return {"status": "unavailable", "reason": "Binary content is not exposed", "sha256": None,
-                        "bytes": info.st_size}
-            if SECRET_CONTENT.search(head):
-                return {"status": "unavailable", "reason": "Credential-shaped content blocked; inspect locally",
+            try:
+                decoder.decode(b"", final=True)
+            except UnicodeDecodeError:
+                return {"status": "unavailable", "reason": "File is not valid UTF-8",
                         "sha256": None, "bytes": info.st_size}
             sha = hasher.hexdigest()
+        after = os.fstat(fd)
+        after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+        if after_identity != identity:
+            return {"status": "unavailable", "reason": "File changed while reading",
+                    "sha256": None, "bytes": after.st_size}
         _cache_put(key, identity, (sha, lines))
-        return {"sha256": sha, "lines": lines, "bytes": info.st_size, "hash_status": "ok"}
+        return {"sha256": sha, "lines": lines, "bytes": info.st_size,
+                "hash_status": "ok", "_identity": identity}
 
     # ------------------------------------------------------------------ output
 
@@ -584,10 +615,11 @@ class ContextStore:
         items.sort(key=lambda item: item["path"])
         page = items[offset:offset + limit]
         budget = _Budget(MAX_HASH_BYTES)
+        entry_by_path = {entry.path: entry for entry in entries}
         for item in page:
             if item["status"] != "available" or not include_hashes:
                 continue
-            probed = self._probe(item["path"], budget)
+            probed = self._probe(item["path"], budget, entry_by_path[item["path"]])
             if probed.get("status") == "unavailable":
                 item.update({"status": "unavailable", "reason": probed.get("reason"), "sha256": None})
             else:
@@ -673,7 +705,7 @@ class ContextStore:
         budget = _Budget(MAX_HASH_BYTES)
         items = []
         for entry in page:
-            probed = self._probe(entry.path, budget)
+            probed = self._probe(entry.path, budget, entry)
             item = {"path": entry.path, "bytes": entry.size, "sha256": probed.get("sha256")}
             if probed.get("status") == "unavailable":
                 item.update({"status": "unavailable", "reason": probed.get("reason")})
@@ -737,31 +769,46 @@ class ContextStore:
         remaining = candidates[start_index:]
         budget = _Budget(MAX_SCAN_BYTES)
         scan_set: list[FileEntry] = []
-        for entry in remaining:
-            if scan_set and budget.used + entry.size > budget.limit:
+        oversized: list[dict[str, Any]] = []
+        overflow: list[FileEntry] = []
+        for position, entry in enumerate(remaining):
+            if entry.size > budget.limit:
+                oversized.append({"path": entry.path, "status": "unavailable",
+                                  "reason": "File exceeds the per-call search scan limit"})
+                continue
+            if budget.used + entry.size > budget.limit:
                 budget.exhausted = True
+                overflow = remaining[position:]
                 break
             budget.used += entry.size
             scan_set.append(entry)
-        overflow = remaining[len(scan_set):]
-        outcome = self._scan_rg(spec, report_terms, scan_set, start_line, before, after,
+        scan_start_line = start_line if scan_set and remaining and scan_set[0].path == remaining[0].path else 1
+        outcome = self._scan_rg(spec, report_terms, scan_set, scan_start_line, before, after,
                                 output_mode) if RG else None
         if outcome is None:
-            outcome = self._scan_py(spec, report_terms, scan_set, start_line, before, after, output_mode)
+            outcome = self._scan_py(spec, report_terms, scan_set, scan_start_line, before, after, output_mode)
+        outcome["unavailable"].extend(oversized)
         items = outcome["items"]
         hash_budget = _Budget(MAX_HASH_BYTES)
         probed: dict[str, dict[str, Any]] = {}
+        entry_by_path = {entry.path: entry for entry in scan_set}
+        verified_items: list[dict[str, Any]] = []
         for item in items:
             path = item["path"]
             if path not in probed:
-                probed[path] = self._probe(path, hash_budget)
+                probed[path] = self._probe(path, hash_budget, entry_by_path[path])
             probe = probed[path]
             if probe.get("status") == "unavailable":
-                item["sha256"] = None
+                if not any(skipped["path"] == path for skipped in outcome["unavailable"]):
+                    outcome["unavailable"].append({"path": path, "status": "unavailable",
+                                                   "reason": probe.get("reason")})
+                continue
             else:
                 item["sha256"] = probe.get("sha256")
                 if probe.get("sha256") is None:
                     item["hash_status"] = "deferred"
+            verified_items.append(item)
+        items = verified_items
         key = {"matches": "matches", "files": "files", "count": "counts"}[output_mode]
         per_file = output_mode != "matches"
         kept: list[dict[str, Any]] = []
@@ -1008,22 +1055,39 @@ class ContextStore:
             resume_line = None
             done = False
             eof = False
-            while not done:
+            security_tail = b""
+            while True:
                 chunk = os.read(fd, CHUNK_BYTES)
                 if not chunk:
                     eof = True
+                    try:
+                        decoded = decoder.decode(b"", final=True)
+                    except UnicodeDecodeError:
+                        return {"status": "unavailable", "reason": "File is not valid UTF-8", "matches": []}
+                    if not done:
+                        buffer += decoded
                     break
                 if not budget.take(len(chunk)):
                     resume_line = number + 1
                     break
+                security_window = security_tail + chunk
+                if b"\0" in chunk:
+                    return {"status": "unavailable", "reason": "Binary content is not exposed", "matches": []}
+                if SECRET_CONTENT.search(security_window):
+                    return {"status": "unavailable",
+                            "reason": "Credential-shaped content blocked; inspect locally", "matches": []}
+                security_tail = security_window[-SECURITY_OVERLAP_BYTES:]
                 if collected is not None:
                     collected.append(chunk)
                 elif len(head) < 4096:
                     head += chunk[:4096 - len(head)]
                 try:
-                    buffer += decoder.decode(chunk)
+                    decoded = decoder.decode(chunk)
                 except UnicodeDecodeError:
                     return {"status": "unavailable", "reason": "File is not valid UTF-8", "matches": []}
+                if done:
+                    continue
+                buffer += decoded
                 while not done:
                     cut = buffer.find("\n")
                     if cut < 0:
@@ -1067,7 +1131,10 @@ class ContextStore:
             if not done and buffer:
                 raw = buffer[:-1] if buffer.endswith("\r") else buffer
                 number += 1
-                if number >= start_line and budget.remaining() > 0:
+                # The bytes in `buffer` were already charged to the scan budget when the
+                # final chunk was read. Process a non-newline-terminated final line even when
+                # that read consumed the budget exactly.
+                if number >= start_line:
                     found = matcher(raw)
                     if output_mode == "matches":
                         if found:
@@ -1156,6 +1223,16 @@ class ContextStore:
             cached, identity = self._cached(path, info)
             if info.st_size <= MAX_FILE_BYTES:
                 return self._read_small(fd, info, path, start, requested_end, expected, identity, cached)
+            probed = self._probe(path, budget)
+            if probed.get("status") == "unavailable":
+                return {"path": path, "status": "unavailable", "reason": probed.get("reason")}
+            if probed.get("sha256") is None:
+                return {"path": path, "status": "unverified", "sha256": None, "bytes": info.st_size,
+                        "reason": "File is too large to verify safely within this call"}
+            if probed.get("_identity") != identity:
+                return {"path": path, "status": "unavailable",
+                        "reason": "File changed while preparing the line range"}
+            cached = (probed["sha256"], probed.get("lines"))
             return self._read_large(fd, info, path, start, requested_end, expected, identity, cached, budget)
         finally:
             os.close(fd)
@@ -1163,6 +1240,10 @@ class ContextStore:
     def _read_small(self, fd, info, path, start, requested_end, expected, identity, cached) -> dict[str, Any]:
         data = _read_all(fd, MAX_FILE_BYTES + 1)
         if len(data) > MAX_FILE_BYTES:
+            return {"path": path, "status": "unavailable", "reason": "File changed while reading"}
+        after = os.fstat(fd)
+        after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+        if after_identity != identity:
             return {"path": path, "status": "unavailable", "reason": "File changed while reading"}
         if b"\0" in data:
             return {"path": path, "status": "unavailable", "reason": "Binary content is not exposed"}
@@ -1266,6 +1347,10 @@ class ContextStore:
             _cache_put(self.cache_prefix + (path,), identity, (sha, total_lines))
         if hasher is None and not eof:
             eof = not os.read(fd, 1)
+        after = os.fstat(fd)
+        after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+        if after_identity != identity:
+            return {"path": path, "status": "unavailable", "reason": "File changed while reading"}
         metadata = {"path": path, "sha256": sha, "bytes": info.st_size, "lines": total_lines}
         if expected and sha != expected:
             return metadata | {"status": "changed_file"}
@@ -1307,22 +1392,28 @@ class ContextStore:
         except (OSError, ContextError) as exc:
             return self._finish(base | {"path": path, "status": "unavailable", "reason": _reason(exc)})
         try:
-            cached, _ = self._cached(path, info)
-            sha = cached[0] if cached else None
+            probed = self._probe(path, _Budget(MAX_HASH_BYTES))
+            if probed.get("status") == "unavailable":
+                return self._finish(base | {"path": path, "status": "unavailable", "sha256": None,
+                                            "reason": probed.get("reason")})
+            sha = probed.get("sha256")
+            if sha is None:
+                return self._finish(base | {"path": path, "status": "unverified", "sha256": None,
+                                            "bytes": info.st_size,
+                                            "reason": "File is too large to verify safely within this call"})
+            identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            if probed.get("_identity") != identity:
+                return self._finish(base | {"path": path, "status": "unavailable", "sha256": None,
+                                            "reason": "File changed while preparing the byte window"})
             if sha256 is not None and sha != sha256:
-                probed = self._probe(path, _Budget(MAX_HASH_BYTES))
-                if probed.get("status") == "unavailable":
-                    return self._finish(base | {"path": path, "status": "unavailable", "sha256": None,
-                                                "reason": probed.get("reason")})
-                sha = probed.get("sha256")
-                if sha is None:
-                    return self._finish(base | {"path": path, "status": "unverified", "sha256": None,
-                                                "bytes": info.st_size,
-                                                "reason": "File is too large to hash within this call"})
-                if sha != sha256:
-                    return self._finish(base | {"path": path, "status": "changed_file", "sha256": sha,
-                                                "bytes": info.st_size})
+                return self._finish(base | {"path": path, "status": "changed_file", "sha256": sha,
+                                            "bytes": info.st_size})
             data = os.pread(fd, limit, offset)
+            after = os.fstat(fd)
+            after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+            if after_identity != identity:
+                return self._finish(base | {"path": path, "status": "unavailable", "sha256": None,
+                                            "reason": "File changed while reading the byte window"})
             if b"\0" in data:
                 return self._finish(base | {"path": path, "status": "unavailable",
                                             "reason": "Binary content is not exposed"})
@@ -1339,7 +1430,8 @@ class ContextStore:
 
     def changes(self, known: dict[str, str], offset: int = 0, limit: int = 50, expected_view_id=None):
         """Compare a known path/hash map and report added, modified and deleted paths."""
-        if len(known) > MAX_KNOWN_FILES or not 0 <= offset <= MAX_KNOWN_FILES or not 1 <= limit <= 200:
+        if (len(known) > MAX_KNOWN_FILES or not 0 <= offset <= MAX_DISCOVERED_FILES + MAX_KNOWN_FILES
+                or not 1 <= limit <= 200):
             raise ContextError("Invalid known-file list or pagination")
         if any(not self._allowed(path) for path in known):
             raise ContextError("A known path is outside the context policy")
@@ -1350,51 +1442,57 @@ class ContextStore:
             return self._finish(base | {"status": "changed_view",
                                         "message": "Files changed. Refresh the index or changed_files before combining evidence."})
         current = {entry.path: entry for entry in entries}
-        known_paths = sorted(known)
+        paths = sorted(set(current) | set(known))
         budget = _Budget(MAX_HASH_BYTES)
-        added: list[dict[str, Any]] = []
-        for path in sorted(set(current) - set(known)):
-            probed = self._probe(path, budget)
-            item = {"path": path, "status": "added", "sha256": probed.get("sha256"), "bytes": current[path].size}
-            if probed.get("status") == "unavailable":
-                item["reason"] = probed.get("reason")
-            elif probed.get("sha256") is None:
-                item["hash_status"] = "deferred"
-            added.append(item)
-        modified: list[dict[str, Any]] = []
-        blocked: list[dict[str, Any]] = []
-        unchanged = 0
-        deferred = 0
+        result = base | {"added": [], "modified": [], "deleted": [], "blocked": [],
+                         "unchanged_files": 0, "deferred_files": 0, "page_offset": offset,
+                         "compared_paths": 0, "total_paths": len(paths)}
         next_offset = None
-        for position in range(offset, len(known_paths)):
-            path = known_paths[position]
+        for position in range(offset, len(paths)):
+            if result["compared_paths"] >= limit:
+                next_offset = position
+                break
+            path = paths[position]
             entry = current.get(path)
+            key = None
+            item = None
             if entry is None:
-                continue
-            probed = self._probe(path, budget)
-            sha = probed.get("sha256")
-            if probed.get("status") == "unavailable":
-                blocked.append({"path": path, "status": "unavailable", "reason": probed.get("reason")})
-                continue
-            if sha is None:
-                deferred += 1
-                if budget.exhausted:
+                key, item = "deleted", {"path": path, "status": "deleted"}
+            else:
+                probed = self._probe(path, budget, entry)
+                sha = probed.get("sha256")
+                if path not in known:
+                    key = "added"
+                    item = {"path": path, "status": "added", "sha256": sha, "bytes": entry.size}
+                    if probed.get("status") == "unavailable":
+                        item["reason"] = probed.get("reason")
+                    elif sha is None:
+                        result["deferred_files"] += 1
+                        next_offset = position
+                        break
+                elif probed.get("status") == "unavailable":
+                    key = "blocked"
+                    item = {"path": path, "status": "unavailable", "reason": probed.get("reason")}
+                elif sha is None:
+                    result["deferred_files"] += 1
                     next_offset = position
                     break
-                continue
-            if sha != known[path]:
-                modified.append({"path": path, "status": "modified", "sha256": sha, "bytes": entry.size,
-                                 "previous_sha256": known[path]})
-            else:
-                unchanged += 1
-        deleted = [{"path": path, "status": "deleted"} for path in sorted(set(known) - set(current))]
-        result = base | {"added": [], "modified": [], "deleted": [], "blocked": [], "unchanged_files": unchanged,
-                         "deferred_files": deferred, "next_offset": next_offset,
-                         "total_changes": len(added) + len(modified) + len(deleted)}
-        self._fit(result, "added", added, limit)
-        self._fit(result, "modified", modified, limit)
-        self._fit(result, "deleted", deleted, limit)
-        self._fit(result, "blocked", blocked, limit)
+                elif sha != known[path]:
+                    key = "modified"
+                    item = {"path": path, "status": "modified", "sha256": sha, "bytes": entry.size,
+                            "previous_sha256": known[path]}
+                else:
+                    result["unchanged_files"] += 1
+            if key is not None:
+                result[key].append(item)
+                if len(encoded(result)) > MAX_OUTPUT_CHARS - 200:
+                    result[key].pop()
+                    next_offset = position
+                    break
+            result["compared_paths"] += 1
+        result["next_offset"] = next_offset
+        result["scan_complete"] = next_offset is None
+        result["total_changes"] = sum(len(result[key]) for key in ("added", "modified", "deleted"))
         return self._finish(result)
 
     # ------------------------------------------------------------------ writes
@@ -1407,7 +1505,9 @@ class ContextStore:
         parent = "/".join(parts[:-1]) or None
         directory_fd = self._open_directory(parent)
         try:
-            flags = os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK | (os.O_CREAT if create else 0)
+            flags = os.O_WRONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+            if create:
+                flags |= os.O_CREAT | os.O_EXCL
             try:
                 fd = os.open(parts[-1], flags, 0o644, dir_fd=directory_fd)
             except FileNotFoundError:
@@ -1432,7 +1532,12 @@ class ContextStore:
             data = _read_all(fd, MAX_FILE_BYTES + 1)
             if len(data) > MAX_FILE_BYTES:
                 raise ContextError("File exceeds the writable size limit")
-            return data, info
+            after = os.fstat(fd)
+            before_identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            after_identity = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+            if before_identity != after_identity:
+                raise ContextError("File changed while reading it for a write")
+            return self._checked_content(data), after
         finally:
             os.close(fd)
 
@@ -1450,8 +1555,9 @@ class ContextStore:
         """Replace one approved file's bytes; expected_identity pins the read-time inode."""
         fd, info = self._open_write(path, create)
         try:
-            if expected_identity is not None and (info.st_dev, info.st_ino) != expected_identity:
-                raise ContextError("File was replaced during the write")
+            identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            if expected_identity is not None and identity != expected_identity:
+                raise ContextError("File changed or was replaced during the write")
             os.ftruncate(fd, 0)
             view = memoryview(data)
             while view:
@@ -1462,7 +1568,8 @@ class ContextStore:
             os.close(fd)
         lines = data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
         _cache_put(self.cache_prefix + (path,),
-                   (new_info.st_dev, new_info.st_ino, new_info.st_size, new_info.st_mtime_ns),
+                   (new_info.st_dev, new_info.st_ino, new_info.st_size,
+                    new_info.st_mtime_ns, new_info.st_ctime_ns),
                    (digest(data), lines))
 
     def write_file(self, path: str, content: str, expected_sha256=None, create: bool = True):
@@ -1480,12 +1587,12 @@ class ContextStore:
         if entry is not None:
             current, info = self._current_bytes(path)
             previous_sha = digest(current)
-            identity = (info.st_dev, info.st_ino)
+            identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
             if expected_sha256 is not None and previous_sha != expected_sha256:
                 raise ContextError("File content changed; re-read it before overwriting")
         elif expected_sha256 is not None:
             raise ContextError("File is missing")
-        self._commit(path, data, identity, create)
+        self._commit(path, data, identity, create=entry is None)
         return self._finish(self._base() | {
             "path": str(relative_path(path)), "status": "ok", "created": entry is None,
             "sha256": digest(data), "previous_sha256": previous_sha,
@@ -1520,7 +1627,9 @@ class ContextStore:
             text = text.replace(old, new) if edit.get("replace_all") else text.replace(old, new, 1)
             replacements += count if edit.get("replace_all") else 1
         data = self._checked_content(text.encode("utf-8"))
-        self._commit(path, data, (info.st_dev, info.st_ino), create=False)
+        self._commit(path, data,
+                     (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns),
+                     create=False)
         return self._finish(self._base() | {
             "path": str(relative_path(path)), "status": "ok", "replacements": replacements,
             "sha256": digest(data), "previous_sha256": previous_sha, "bytes": len(data)})
@@ -1538,8 +1647,10 @@ class ContextStore:
         directory_fd = self._open_directory(parent)
         try:
             now = os.stat(parts[-1], dir_fd=directory_fd, follow_symlinks=False)
-            if not stat.S_ISREG(now.st_mode) or (now.st_dev, now.st_ino) != (info.st_dev, info.st_ino):
-                raise ContextError("File was replaced during the delete")
+            identity = (now.st_dev, now.st_ino, now.st_size, now.st_mtime_ns, now.st_ctime_ns)
+            expected_identity = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            if not stat.S_ISREG(now.st_mode) or identity != expected_identity:
+                raise ContextError("File changed or was replaced during the delete")
             os.unlink(parts[-1], dir_fd=directory_fd)
         finally:
             os.close(directory_fd)
