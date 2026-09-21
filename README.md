@@ -164,6 +164,7 @@ and keep each round alive with the wait/wake protocol.
 - [MCP tools](docs/mcp-tools.md)
 - [Direct execution](docs/direct-execution.md)
 - [Security model](docs/security-model.md)
+- [Roadmap](ROADMAP.md)
 
 ## Repository layout
 

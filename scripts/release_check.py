@@ -21,6 +21,7 @@ REQUIRED = [
     "scripts/admin_server.py",
     "scripts/advisor_wait.py",
     "CHANGELOG.md",
+    "ROADMAP.md",
     "docs/configuration.md",
     "docs/mcp-tools.md",
     "docs/direct-execution.md",
