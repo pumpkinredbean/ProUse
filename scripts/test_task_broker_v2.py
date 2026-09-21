@@ -6,7 +6,8 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 
-from codex_orchestrator import TaskBroker, OrchestratorError, _workspace_manifest, _manifest_delta
+from codex_orchestrator import (TaskBroker, OrchestratorError, _permission_settings,
+                              _workspace_manifest, _manifest_delta)
 from workspace_registry import Registry
 
 FAKE = r'''#!/usr/bin/env python3
@@ -27,6 +28,7 @@ if mode=='new_symlink': pathlib.Path('allowed/link').symlink_to('../original.md'
 if mode!='missing_thread': print(json.dumps({'type':'thread.started','thread_id':'independent-test-'+request['workspace_id']}))
 if mode=='two_threads': print(json.dumps({'type':'thread.started','thread_id':'different'}))
 if mode!='no_runtime': print(json.dumps({'type':'turn_context','payload':{'model':'wrong' if mode=='wrong_model' else request['worker_model'], 'effort': 'low' if mode=='wrong_effort' else request['worker_reasoning_effort']}}))
+if mode=='reconnect': print(json.dumps({'type':'error','message':'Reconnecting... 1/5 (stream disconnected before completion)'}))
 if mode!='no_completed': print(json.dumps({'type':'turn.completed','usage':{'input_tokens':1}}))
 if mode=='bad_events': print('malformed event')
 final={'summary':'done','deliverables':[],'validations':['local validation exit 0'],'blockers':[]}
@@ -82,6 +84,7 @@ class TaskBrokerV2Tests(unittest.TestCase):
         result = self.run_mode('write')
         self.assertEqual(result['status'], 'succeeded', result)
         for field, expected in [('workspace_id', 'alpha'), ('worker_profile_id', 'standard'),
+                                ('worker_access', 'full_access'),
                                 ('actual_model', 'test-model'), ('actual_reasoning_effort', 'high'),
                                 ('codex_thread_id', 'independent-test-alpha')]:
             self.assertEqual(result[field], expected)
@@ -228,6 +231,12 @@ class TaskBrokerV2Tests(unittest.TestCase):
         self.assertNotIn(str(self.base), json.dumps(result))
         self.assertEqual(result['summary'], '<workspace>/allowed/output.md')
 
+    def test_recovered_reconnect_notice_does_not_fail_the_task(self):
+        result = self.run_mode('reconnect')
+        self.assertEqual(result['status'], 'succeeded', result)
+        self.assertEqual(result['blockers'], [])
+        self.assertEqual(result['usage'], {'input_tokens': 1})
+
     def test_task_text_stays_on_stdin_and_security_options_are_explicit(self):
         self.run_mode('no_edit $(do-not-execute) `also-no`')
         p = next((self.base / '.state/orchestrator/workspaces/alpha/tasks').glob('*/argv.json'))
@@ -236,9 +245,25 @@ class TaskBrokerV2Tests(unittest.TestCase):
         self.assertFalse(any('do-not-execute' in a for a in argv))
         self.assertIn('--ignore-user-config', argv)
         self.assertIn('approval_policy="never"', argv)
-        self.assertIn('permissions.broker-task.network.enabled=false', argv)
-        self.assertIn('default_permissions="broker-task"', argv)
+        self.assertIn('sandbox_mode="danger-full-access"', argv)
+        self.assertIn('shell_environment_policy.inherit="all"', argv)
+        self.assertNotIn('default_permissions="broker-task"', argv)
         self.assertIn('model_reasoning_effort="high"', argv)
+
+
+class WorkerAccessModeTests(unittest.TestCase):
+    def test_full_access_adds_no_sandbox_settings(self):
+        self.assertEqual(_permission_settings(Path('/tmp/ws'), {
+            'write_mode': 'workspace_write', 'allowed_paths': ['a.md']}), [])
+
+    def test_workspace_sandbox_keeps_the_restricted_boundary(self):
+        settings = _permission_settings(Path('/tmp/ws'), {
+            'write_mode': 'workspace_write', 'allowed_paths': ['a.md'],
+            'worker_access': 'workspace_sandbox'})
+        self.assertIn('default_permissions="broker-task"', settings)
+        self.assertIn('permissions.broker-task.network.enabled=false', settings)
+        self.assertIn('permissions.broker-task.filesystem={":root"="deny",":minimal"="read","/tmp/ws"=',
+                      settings[1])
 
 
 if __name__ == '__main__':

@@ -209,7 +209,7 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual([item['path'] for item in r.context('beta').changes(known)['modified']], ['read.md'])
 
     def test_registry_schema_artifact_matches_runtime(self):
-        p = Path(__file__).resolve().parent.parent / 'examples/workspace-registry.schema.json'
+        p = Path(__file__).resolve().parent.parent / 'references/workspace-registry.schema.json'
         self.assertEqual(json.loads(p.read_text()), REGISTRY_SCHEMA)
 
 

@@ -6,7 +6,8 @@ import textwrap
 import time
 import unittest
 
-from codex_orchestrator import OrchestratorError, TaskBroker
+from codex_orchestrator import (OrchestratorError, TaskBroker, _permission_settings,
+                              _turn_completion_errors)
 
 
 
@@ -23,8 +24,9 @@ class CodexOrchestratorTests(unittest.TestCase):
             import json, pathlib, sys
             args = sys.argv[1:]
             assert args[args.index('--model') + 1] == 'gpt-5.6-sol'
-            assert 'default_permissions="broker-task"' in args
-            assert 'permissions.broker-task.network.enabled=false' in args
+            assert 'sandbox_mode="danger-full-access"' in args
+            assert 'shell_environment_policy.inherit="all"' in args
+            assert not any(a.startswith('default_permissions=') for a in args)
             assert args[-1] == '-'
             prompt = sys.stdin.read()
             output = pathlib.Path(args[args.index('--output-last-message') + 1])
@@ -91,6 +93,27 @@ class CodexOrchestratorTests(unittest.TestCase):
                 request = dict(self.request, orchestrator_task_id=f"bad-{abs(hash(path))}", allowed_paths=[path])
                 with self.assertRaises(OrchestratorError):
                     self.broker.submit(request)
+
+
+
+class TurnCompletionTests(unittest.TestCase):
+    def test_recovered_reconnect_error_is_not_fatal(self):
+        events = [{"type": "turn.started"},
+                  {"type": "error", "message": "Reconnecting... 1/5 (stream disconnected)"},
+                  {"type": "turn.completed"}]
+        self.assertEqual(_turn_completion_errors(events), [])
+
+    def test_missing_completion_is_fatal(self):
+        self.assertEqual(_turn_completion_errors([{"type": "turn.started"}]),
+                         ["No clean completed Codex turn"])
+
+    def test_turn_failure_is_fatal(self):
+        events = [{"type": "turn.failed"}, {"type": "turn.completed"}]
+        self.assertEqual(_turn_completion_errors(events), ["No clean completed Codex turn"])
+
+    def test_error_after_completion_is_fatal(self):
+        events = [{"type": "turn.completed"}, {"type": "error", "message": "late failure"}]
+        self.assertEqual(_turn_completion_errors(events), ["No clean completed Codex turn"])
 
 
 if __name__ == "__main__":

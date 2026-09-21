@@ -142,7 +142,7 @@ function workspaces() {
 }
 function profiles() {
   const config = data.bundle.config;
-  return `<section class="card"><table><thead><tr><th>프로필</th><th>모델</th><th>추론 수준</th><th>사용 중인 대상</th><th></th></tr></thead><tbody>${config.worker_profiles.map((p) => `<tr><td><strong>${esc(p.label || p.id)}</strong><span class="secondary mono">${esc(p.id)} ${p.id === config.default_worker_profile ? "· 전역 기본" : ""}</span></td><td class="mono">${esc(p.model)}</td><td><span class="badge">${esc(p.reasoning_effort)}</span></td><td>${config.workspaces.filter((w) => (w.default_worker_profile || config.default_worker_profile) === p.id).length}</td><td>${button("수정", "profile-edit", "", `data-id="${esc(p.id)}"`)}</td></tr>`).join("")}</tbody></table></section><div class="notice">프로필 선택 순서: 요청에서 지정한 프로필 → 워크스페이스 기본값 → 전역 기본값. 실제 실행 모델과 추론 수준은 작업 영수증에서 별도로 검증됩니다.</div>`;
+  return `<section class="card"><table><thead><tr><th>프로필</th><th>모델</th><th>추론 수준</th><th>접근 범위</th><th>사용 중인 대상</th><th></th></tr></thead><tbody>${config.worker_profiles.map((p) => `<tr><td><strong>${esc(p.label || p.id)}</strong><span class="secondary mono">${esc(p.id)} ${p.id === config.default_worker_profile ? "· 전역 기본" : ""}</span></td><td class="mono">${esc(p.model)}</td><td><span class="badge">${esc(p.reasoning_effort)}</span></td><td>${(p.access || "full_access") === "workspace_sandbox" ? '<span class="badge">샌드박스</span>' : '<span class="badge good">전체 접근</span>'}</td><td>${config.workspaces.filter((w) => (w.default_worker_profile || config.default_worker_profile) === p.id).length}</td><td>${button("수정", "profile-edit", "", `data-id="${esc(p.id)}"`)}</td></tr>`).join("")}</tbody></table></section><div class="notice">프로필 선택 순서: 요청에서 지정한 프로필 → 워크스페이스 기본값 → 전역 기본값. 실제 실행 모델과 추론 수준은 작업 영수증에서 별도로 검증됩니다.</div>`;
 }
 function policies() {
   return (
@@ -155,8 +155,18 @@ function policies() {
     '<div class="card empty">워크스페이스를 먼저 등록하세요.</div>'
   );
 }
+function taskReason(t) {
+  const failed = ["failed", "scope_violation", "timed_out", "corrupt"].includes(t.status);
+  const changed = (t.changed_paths || []).length;
+  const note = changed ? `<span class="secondary">변경 ${changed}개 경로</span>` : "";
+  if (!failed) return note;
+  const text = String((t.blockers || [])[0] || t.error || "사유 미기록");
+  const short = text.length > 180 ? text.slice(0, 177) + "…" : text;
+  return `<span class="secondary">사유: ${esc(short)}</span>` + note;
+}
+
 function taskTable(list) {
-  return `<div class="table-wrap"><table><thead><tr><th>작업 / 워크스페이스</th><th>상태</th><th>프로필</th><th></th></tr></thead><tbody>${list.map((t) => `<tr><td class="task-id"><strong>${esc(t.orchestrator_task_id)}</strong><span class="secondary">${esc(t.workspace_id)} · ${time(t.created_at)} ${t.legacy_receipt ? "· 과거 영수증" : ""}</span></td><td>${status(t.status)}${t.cancel_requested ? '<span class="secondary">취소 요청됨</span>' : ""}</td><td>${esc(t.worker_profile_id || "—")}</td><td>${button("상세", "task-detail", "", `data-id="${esc(t.orchestrator_task_id)}" data-ws="${esc(t.workspace_id)}"`)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">해당 작업이 없습니다.</td></tr>'}</tbody></table></div>`;
+  return `<div class="table-wrap"><table><thead><tr><th>작업 / 워크스페이스</th><th>상태</th><th>프로필</th><th></th></tr></thead><tbody>${list.map((t) => `<tr><td class="task-id"><strong>${esc(t.orchestrator_task_id)}</strong><span class="secondary">${esc(t.workspace_id)} · ${time(t.created_at)} ${t.legacy_receipt ? "· 과거 영수증" : ""}</span>${taskReason(t)}</td><td>${status(t.status)}${t.cancel_requested ? '<span class="secondary">취소 요청됨</span>' : ""}</td><td>${esc(t.worker_profile_id || "—")}</td><td>${button("상세", "task-detail", "", `data-id="${esc(t.orchestrator_task_id)}" data-ws="${esc(t.workspace_id)}"`)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">해당 작업이 없습니다.</td></tr>'}</tbody></table></div>`;
 }
 function executionTable(list) {
   return `<div class="table-wrap"><table><thead><tr><th>operation / 워크스페이스</th><th>상태</th><th>시작</th><th></th></tr></thead><tbody>${list.map((x) => `<tr><td class="task-id"><strong>${esc(x.operation_id)}</strong><span class="secondary">${esc(x.workspace_id)}</span></td><td>${status(x.status)}</td><td>${time(x.updated_at || x.created_at)}</td><td>${button("상세", "execution-detail", "", `data-id="${esc(x.operation_id)}" data-ws="${esc(x.workspace_id)}"`)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">직접 operation 기록이 없습니다.</td></tr>'}</tbody></table></div>`;
@@ -293,13 +303,14 @@ function profileEdit(id) {
       )
       .join(
         "",
-      )}</select></label><label>추론 수준<select name="effort" id="profile-effort">${data.capabilities[p.model].map((e) => `<option ${p.reasoning_effort === e ? "selected" : ""}>${esc(e)}</option>`).join("")}</select></label><label><input type="checkbox" name="default" ${data.bundle.config.default_worker_profile === p.id ? "checked" : ""}>전역 기본 프로필</label>${id ? button("삭제", "profile-delete", "danger", `type="button" data-id="${esc(id)}"`) : ""}${footer()}</form>`,
+      )}</select></label><label>추론 수준<select name="effort" id="profile-effort">${data.capabilities[p.model].map((e) => `<option ${p.reasoning_effort === e ? "selected" : ""}>${esc(e)}</option>`).join("")}</select></label><label>접근 범위<select name="access"><option value="full_access" ${(p.access || "full_access") === "full_access" ? "selected" : ""}>전체 접근 (기본)</option><option value="workspace_sandbox" ${p.access === "workspace_sandbox" ? "selected" : ""}>워크스페이스 샌드박스</option></select><span>전체 접근은 운영자의 환경·네트워크·파일시스템을 그대로 씁니다. 샌드박스는 워크스페이스 읽기와 allowed_paths 쓰기, 최소 OS 도구, 네트워크 없음으로 제한합니다.</span></label><label><input type="checkbox" name="default" ${data.bundle.config.default_worker_profile === p.id ? "checked" : ""}>전역 기본 프로필</label>${id ? button("삭제", "profile-delete", "danger", `type="button" data-id="${esc(id)}"`) : ""}${footer()}</form>`,
     async (f) => {
       const next = structuredClone(data.bundle);
       const np = {
         id: f.get("id"),
         model: f.get("model"),
         reasoning_effort: f.get("effort"),
+        access: f.get("access") || "full_access",
       };
       if (f.get("label")) np.label = f.get("label");
       if (!id && next.config.worker_profiles.some((p) => p.id === np.id))
@@ -371,7 +382,7 @@ function taskDetail(id, ws) {
   );
   modal(
     "작업 영수증",
-    `<p class="mono">${esc(id)}</p>${status(t.status)}<div class="list-item"><strong>워커 프로필 / 실제 모델</strong><span class="mono">${esc(t.worker_profile_id)} / ${esc(t.actual_model || "미확인")} / ${esc(t.actual_reasoning_effort || "미확인")}</span></div><div class="list-item"><strong>독립 Codex thread</strong><span class="mono">${esc(t.codex_thread_id || "미확인")}</span></div><p class="muted">종료 코드 ${esc(t.exit_code ?? "—")} · 변경 ${(t.changed_paths || []).length} · 예상 밖 변경 ${(t.unexpected_changed_paths || []).length}</p><pre class="detail">${esc(pretty(t))}</pre><footer>${button("영수증 다운로드", "download", "", `data-id="${esc(id)}" data-ws="${esc(ws)}"`)}${!terminal.includes(t.status) ? button("중단 기록 확인 · 회수", "reconcile", "", `data-id="${esc(id)}" data-ws="${esc(ws)}"`) : ""}${!terminal.includes(t.status) ? button("작업 취소 요청", "cancel", "danger", `data-id="${esc(id)}" data-ws="${esc(ws)}" ${t.cancel_requested ? "disabled" : ""}`) : ""}${button("닫기", "close")}</footer>`,
+    `<p class="mono">${esc(id)}</p>${status(t.status)}<div class="list-item"><strong>워커 프로필 / 실제 모델</strong><span class="mono">${esc(t.worker_profile_id)} / ${esc(t.actual_model || "미확인")} / ${esc(t.actual_reasoning_effort || "미확인")} / ${esc(t.worker_access || "full_access")}</span></div><div class="list-item"><strong>독립 Codex thread</strong><span class="mono">${esc(t.codex_thread_id || "미확인")}</span></div><p class="muted">종료 코드 ${esc(t.exit_code ?? "—")} · 변경 ${(t.changed_paths || []).length} · 예상 밖 변경 ${(t.unexpected_changed_paths || []).length}</p><pre class="detail">${esc(pretty(t))}</pre><footer>${button("영수증 다운로드", "download", "", `data-id="${esc(id)}" data-ws="${esc(ws)}"`)}${!terminal.includes(t.status) ? button("중단 기록 확인 · 회수", "reconcile", "", `data-id="${esc(id)}" data-ws="${esc(ws)}"`) : ""}${!terminal.includes(t.status) ? button("작업 취소 요청", "cancel", "danger", `data-id="${esc(id)}" data-ws="${esc(ws)}" ${t.cancel_requested ? "disabled" : ""}`) : ""}${button("닫기", "close")}</footer>`,
   );
 }
 function executionDetail(operationId, workspaceId) {

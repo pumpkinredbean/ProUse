@@ -22,7 +22,8 @@ PROFILE = {"type": "object", "additionalProperties": False,
            "required": ["id", "model", "reasoning_effort"], "properties": {
                "id": ID, "label": {"type": "string", "minLength": 1, "maxLength": 120},
                "model": {"type": "string", "pattern": r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,119}$"},
-               "reasoning_effort": {"enum": EFFORTS}}}
+               "reasoning_effort": {"enum": EFFORTS},
+               "access": {"enum": ["full_access", "workspace_sandbox"]}}}
 WORKSPACE = {"type": "object", "additionalProperties": False,
              "required": ["id", "label", "root", "enabled"], "properties": {
                  "id": ID, "label": {"type": "string", "minLength": 1, "maxLength": 120},

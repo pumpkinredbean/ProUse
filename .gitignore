@@ -21,3 +21,4 @@ htmlcov/
 artifacts/
 dist/
 build/
+references/context-policy.json

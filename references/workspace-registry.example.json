@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "server_name": "ProUse",
+  "state_dir": ".state/orchestrator",
+  "default_worker_profile": "standard",
+  "model_capabilities": {"gpt-5.6-sol": ["high", "xhigh"]},
+  "worker_profiles": [
+    {"id": "standard", "label": "Standard", "model": "gpt-5.6-sol", "reasoning_effort": "xhigh",
+     "access": "full_access"},
+    {"id": "quick", "label": "Short tasks", "model": "gpt-5.6-sol", "reasoning_effort": "high",
+     "access": "full_access"},
+    {"id": "sandboxed", "label": "Sandboxed", "model": "gpt-5.6-sol", "reasoning_effort": "high",
+     "access": "workspace_sandbox"}
+  ],
+  "workspaces": [
+    {"id": "example", "label": "Example project", "root": "/srv/projects/example", "enabled": true,
+     "default_worker_profile": "standard", "context_policy": "context-policy.example.json"}
+  ]
+}
