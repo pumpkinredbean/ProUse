@@ -172,9 +172,12 @@ def validate_request(request):
     normalized["write_mode"] = request.get("write_mode", "workspace_write")
     if normalized["write_mode"] not in {"read_only", "workspace_write"}:
         raise OrchestratorError("Invalid write_mode")
-    normalized["max_seconds"] = request.get("max_seconds", 1200)
-    if type(normalized["max_seconds"]) is not int or not 60 <= normalized["max_seconds"] <= 1800:
-        raise OrchestratorError("max_seconds must be 60-1800")
+    # No wall-clock limit by default: the bridge hands the task to the worker and waits for it.
+    # A caller may still pass an explicit bound of at least 60 seconds.
+    normalized["max_seconds"] = request.get("max_seconds")
+    if normalized["max_seconds"] is not None and (
+            type(normalized["max_seconds"]) is not int or normalized["max_seconds"] < 60):
+        raise OrchestratorError("max_seconds must be an integer of at least 60 seconds")
     if len(_json_bytes(normalized)) > MAX_TASK_CHARS:
         raise OrchestratorError("Task request exceeds size limit")
     return normalized
@@ -489,17 +492,13 @@ def run_task(root, state_dir, task_id, codex_bin):
             request = _read_json(request_path)
         # Release the submission lock before waiting/executing: duplicate submissions
         # must return the current receipt immediately, even for a long-running worker.
-        while True:
-            if (directory / "cancel.json").exists():
-                state = _read_json(state_path)
-                state.update(status="cancelled", error="Cancelled by local administrator while queued", completed_at=_now(), updated_at=_now())
-                _atomic_json(state_path, state)
-                return 1
-            try:
-                fcntl.flock(workspace_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except BlockingIOError:
-                time.sleep(.1)
+        if (directory / "cancel.json").exists():
+            state = _read_json(state_path)
+            state.update(status="cancelled", error="Cancelled by local administrator while queued", completed_at=_now(), updated_at=_now())
+            _atomic_json(state_path, state)
+            return 1
+        # The bridge hands the task straight to the worker instead of queueing behind other
+        # workers on the same root. The receipt still records the before/after manifest diff.
         state = _read_json(state_path)
         if (directory / "cancel.json").exists():
             state.update(status="cancelled", error="Cancelled by local administrator before execution", completed_at=_now(), updated_at=_now())
@@ -530,16 +529,16 @@ def run_task(root, state_dir, task_id, codex_bin):
                 _atomic_json(state_path, state)
                 try:
                     payload = _prompt(request).encode()
-                    deadline = time.monotonic() + request["max_seconds"]
+                    limit = request.get("max_seconds")
+                    deadline = time.monotonic() + limit if limit else None
                     while True:
                         if (directory / "cancel.json").exists():
                             terminal = "cancelled"
                             raise subprocess.TimeoutExpired(argv, 0)
-                        remaining = deadline - time.monotonic()
-                        if remaining <= 0:
-                            raise subprocess.TimeoutExpired(argv, request["max_seconds"])
+                        if deadline is not None and time.monotonic() >= deadline:
+                            raise subprocess.TimeoutExpired(argv, limit)
                         try:
-                            process.communicate(payload, timeout=min(0.5, remaining))
+                            process.communicate(payload, timeout=0.5)
                             terminal = "succeeded" if process.returncode == 0 else "failed"
                             break
                         except subprocess.TimeoutExpired:

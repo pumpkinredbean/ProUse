@@ -22,11 +22,3 @@ schema-artifact test had to accept both layouts.
 
 Decision needed: generate the public tree from the private one with a script, or maintain the
 public tree as a branch that is merged deliberately.
-
-## Worker time budget
-
-Delegated workers stop at `max_seconds` (default 1200, hard maximum 1800) and the task is recorded
-as `timed_out`; long research tasks must be split to fit. The full-access worker change on
-2026-09-21 removed the toolchain blocker, so the time budget is now the remaining structural limit.
-
-Decision needed: raise the ceiling, or make the budget configurable per worker profile.
