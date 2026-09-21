@@ -110,6 +110,12 @@
               "max",
               "ultra"
             ]
+          },
+          "access": {
+            "enum": [
+              "full_access",
+              "workspace_sandbox"
+            ]
           }
         }
       }

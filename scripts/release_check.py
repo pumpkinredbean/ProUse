@@ -16,19 +16,10 @@ REQUIRED = [
     ".github/workflows/ci.yml",
     "SKILL.md",
     "agents/openai.yaml",
-    "references/workspace-registry.example.json",
-    "references/context-policy.example.json",
-    "references/private-context.md",
-    "references/multi-workspace-orchestration.md",
     "scripts/context_server.py",
     "scripts/context_store.py",
     "scripts/admin_server.py",
     "scripts/advisor_wait.py",
-    "references/wake-protocol.md",
-    "references/admin-console.md",
-    "references/direct-execution.md",
-    "references/exchange-protocol.md",
-    "references/workspace-registry.schema.json",
     "CHANGELOG.md",
     "docs/configuration.md",
     "docs/mcp-tools.md",
@@ -41,10 +32,9 @@ REQUIRED = [
     "scripts/test_advisor_wait.py",
 ]
 
-# Live runtime state and credentials never belong in the public tree. The advisor skill itself
-# (SKILL.md, agents/, references/) is part of the product and is required above.
+# Live runtime state and credentials never belong in the public tree. The advisor skill
+# (SKILL.md and agents/) is part of the product and is required above.
 FORBIDDEN_PUBLIC_PATHS = [
-    "references/context-policy.json",
     "PUBLISHING.md",
     ".state",
 ]
@@ -56,7 +46,7 @@ PRIVATE_PATTERNS = {
     "obvious OpenAI-style key": re.compile(r"\bsk-[A-Za-z0-9_-]{16,}\b"),
 }
 
-EXCLUDED = {Path("references/context-policy.json"), Path("scripts/release_check.py")}
+EXCLUDED = {Path("scripts/release_check.py")}
 
 
 def fail(message: str) -> None:
@@ -88,11 +78,11 @@ def main() -> None:
     if "default='127.0.0.1'" not in admin and 'default="127.0.0.1"' not in admin:
         fail("Admin server is not localhost-only by default")
 
-    registry = json.loads((ROOT / "references/workspace-registry.example.json").read_text())
+    registry = json.loads((ROOT / "examples/workspace-registry.example.json").read_text())
     if registry.get("server_name") != "ProUse":
         fail("registry example server_name is not ProUse")
 
-    policy = json.loads((ROOT / "references/context-policy.example.json").read_text())
+    policy = json.loads((ROOT / "examples/context-policy.example.json").read_text())
     if policy.get("name") != "example-context":
         fail("context policy example is not generic")
 

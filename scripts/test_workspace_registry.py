@@ -209,7 +209,11 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual([item['path'] for item in r.context('beta').changes(known)['modified']], ['read.md'])
 
     def test_registry_schema_artifact_matches_runtime(self):
-        p = Path(__file__).resolve().parent.parent / 'references/workspace-registry.schema.json'
+        root = Path(__file__).resolve().parent.parent
+        candidates = [root / 'references/workspace-registry.schema.json',
+                      root / 'examples/workspace-registry.schema.json']
+        p = next((c for c in candidates if c.is_file()), None)
+        self.assertIsNotNone(p, 'registry schema artifact is missing')
         self.assertEqual(json.loads(p.read_text()), REGISTRY_SCHEMA)
 
 

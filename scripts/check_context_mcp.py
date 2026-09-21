@@ -16,12 +16,21 @@ ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = Path(__file__).resolve().parent
 
 
+def _default_policy():
+    """Prefer the live private policy, fall back to the public example."""
+    for candidate in (SCRIPTS.parent / "references/context-policy.json",
+                      SCRIPTS.parent / "examples/context-policy.example.json"):
+        if candidate.is_file():
+            return candidate
+    raise SystemExit("no context policy found; pass --registry or add a policy file")
+
+
 async def run(registry=None):
     params = StdioServerParameters(
         command=sys.executable,
         args=([str(SCRIPTS / "context_server.py"), "--registry", str(registry)] if registry else
               [str(SCRIPTS / "context_server.py"), "--root", str(ROOT),
-               "--policy", str(SCRIPTS.parent / "references/context-policy.json")]),
+               "--policy", str(_default_policy())]),
         cwd=str(ROOT),
     )
     async with stdio_client(params) as (reader, writer):

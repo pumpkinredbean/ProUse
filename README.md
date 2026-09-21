@@ -160,11 +160,6 @@ and keep each round alive with the wait/wake protocol.
 
 ## Documentation
 
-- [Round liveness: wait and wake](references/wake-protocol.md)
-- [Worker-advisor exchange](references/exchange-protocol.md)
-- [Workspace orchestration](references/multi-workspace-orchestration.md)
-- [Private context](references/private-context.md)
-- [Admin console](references/admin-console.md)
 - [Configuration](docs/configuration.md)
 - [MCP tools](docs/mcp-tools.md)
 - [Direct execution](docs/direct-execution.md)
@@ -175,7 +170,6 @@ and keep each round alive with the wait/wake protocol.
 ```text
 SKILL.md                     agent-facing skill for this repository
 agents/openai.yaml           skill metadata
-references/                  advisor contracts, wait/wake protocol, examples and schema
 examples/                    registry, policy, and schema examples
 docs/                        public operator documentation
 scripts/context_server.py    MCP server

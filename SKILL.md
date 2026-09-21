@@ -13,7 +13,7 @@ does not replace Pro's research judgment with its own. Operational permission st
 from the user.
 
 When the user asks to fix private file access or repeated context-transfer cost, solve that
-connection task before resuming research. Read [private context](references/private-context.md).
+connection task before resuming research. Read the private-context notes in the private repository before changing that transport.
 The implemented MCP server can supply bounded source and policy-scoped file tools directly through Secure MCP Tunnel;
 record local readiness separately from verified use by the existing Pro model. Small packets
 alone do not solve that structural request.
@@ -39,8 +39,8 @@ context policy as reads. Pass the observed `sha256` as `expected_sha256` so a wr
 overwrites unseen changes.
 
 For tool schemas, receipts, pause behavior, configuration and migration, read
-[multi-workspace orchestration](references/multi-workspace-orchestration.md) and
-[direct execution](references/direct-execution.md).
+[MCP tools](docs/mcp-tools.md), [configuration](docs/configuration.md) and
+[direct execution](docs/direct-execution.md).
 
 ## Preserve the chosen channel
 
@@ -64,7 +64,7 @@ For tool schemas, receipts, pause behavior, configuration and migration, read
 
 ## Give the advisor direct evidence and a bounded orchestration turn
 
-Read [the exchange protocol](references/exchange-protocol.md) for packet and state formats.
+Keep the packet and state formats in the project's own round records.
 Keep the mission and stable constraints in a small baseline; send only the changed evidence,
 relevant exact source excerpts, competing explanations, and the decision needed this round.
 Include disconfirming observations and unknowns so the worker's summary cannot hide the problem.
@@ -123,8 +123,8 @@ round as in progress when nothing will resume it.
   owns the thread starts a turn from the queue when the session is idle. On wake, resume from the
   state file and the captured response; do not resend the packet.
 
-Read [round liveness](references/wake-protocol.md) for the exact commands, the verified wake
-semantics and their preconditions, the wake packet format, and the failure modes to avoid.
+The wait/wake commands, wake packet format and their preconditions are part of the installed
+skill's own scripts.
 
 ## Resume after compaction
 
