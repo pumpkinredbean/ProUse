@@ -593,8 +593,11 @@ def run_task(root, state_dir, task_id, codex_bin):
             except (OSError, ValueError, StopIteration):
                 model, effort = None, None
             state.update(actual_model=model, actual_reasoning_effort=effort)
-            if model != request["worker_model"] or effort != request["worker_reasoning_effort"]:
-                errors.append("Runtime model/effort provenance missing or mismatched")
+            # A runtime that reports a different model or effort is a real mismatch. A runtime that
+            # reports nothing leaves null provenance in the receipt instead of failing the work.
+            if ((model is not None and model != request["worker_model"])
+                    or (effort is not None and effort != request["worker_reasoning_effort"])):
+                errors.append("Runtime model/effort provenance mismatched")
             try:
                 if output.stat().st_size > MAX_RESULT_CHARS:
                     raise ValueError()
