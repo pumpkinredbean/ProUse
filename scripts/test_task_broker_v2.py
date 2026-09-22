@@ -164,8 +164,14 @@ class TaskBrokerV2Tests(unittest.TestCase):
     def test_missing_completed_event_fails(self):
         self.assertEqual(self.run_mode('no_completed')['status'], 'failed')
 
-    def test_missing_runtime_model_provenance_fails(self):
-        self.assertEqual(self.run_mode('no_runtime')['status'], 'failed')
+    def test_unreported_runtime_provenance_keeps_the_work_result(self):
+        result = self.run_mode('no_runtime')
+        self.assertEqual(result['status'], 'succeeded', result)
+        self.assertIsNone(result['actual_model'])
+        self.assertEqual(result['blockers'], [])
+
+    def test_mismatched_runtime_model_provenance_fails(self):
+        self.assertEqual(self.run_mode('wrong_model')['status'], 'failed')
 
     def test_runtime_model_mismatch_fails(self):
         self.assertEqual(self.run_mode('wrong_model')['status'], 'failed')
