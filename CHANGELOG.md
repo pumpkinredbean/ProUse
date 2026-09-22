@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add `prouse admin` and `start/restart --background` with verified startup, a
+  per-instance process lock, and usable agent-terminal lifecycle behavior.
+- Bootstrap missing uv/Python prerequisites, refresh same-version installations,
+  and provide copyable agent prompts with source/ref-aware installation instructions.
+- Add `prouse mcp config` with the selected instance environment and `prouse mcp check`
+  for a real handshake, tool discovery, and policy-scoped workspace read.
 - Add the installable `prouse` command, repeatable `uv tool` bootstrap, preserved
   first-run setup, foreground Admin lifecycle, diagnostics/logs, and isolated
   launchd/systemd-user service definitions.

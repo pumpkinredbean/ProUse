@@ -10,33 +10,57 @@ execution behind one workspace registry with durable receipts.
 ProUse is for developers who want a strong interactive model to remain the
 research and orchestration layer while local tools perform mechanical work.
 
-## Install
+## Get started
 
-Ask a local coding agent:
+### Paste into your coding agent
 
-> Read the official ProUse repository's `docs/install-for-agents.md`. Install or
-> update ProUse, preserve my existing settings, configure this project, start and
-> verify it, then report the dashboard and connection readiness plus the stop and
-> restart commands. Ask me only for browser sign-in or connection approval that I
-> must complete.
+Copy this prompt into a local coding agent with terminal access:
 
-Or, from this checkout, run the real one-command user install (no venv activation):
+```text
+Install ProUse for this project. Read and follow:
+https://raw.githubusercontent.com/pumpkinredbean/ProUse/main/docs/install-for-agents.md
+
+Install missing prerequisites, preserve my existing settings, register the current
+project, and start the Admin dashboard in the background. Verify the dashboard and
+the MCP handshake with a workspace read. Give me the dashboard URL, MCP client
+configuration, and the stop/restart commands. Complete the local setup; ask me only
+for sign-in or connection approval that requires my participation.
+```
+
+**Trying a preview?** The `main` URL works after this change is merged. Until then,
+replace `main` in the prompt URL with `codex/cli-onboarding` and add
+`Install that same ref: codex/cli-onboarding.` If your agent already has this checkout,
+ask it to follow [the local installation guide](docs/install-for-agents.md).
+
+### Or use your terminal
+
+From this checkout:
 
 ```bash
 sh install.sh --source .
+prouse setup --workspace "/absolute/path/to/project"
+prouse admin
 ```
 
-Then configure an existing project and run ProUse:
+`prouse admin` starts in the background, checks that the server is ready, and prints
+the dashboard URL. No virtualenv activation or terminal left running is needed.
+
+For a published Git ref, download its installer and install that same ref:
 
 ```bash
-prouse setup --workspace "/absolute/path/to/project" --no-input
-prouse start
+curl -fsSL https://raw.githubusercontent.com/pumpkinredbean/ProUse/main/install.sh -o /tmp/prouse-install.sh
+sh /tmp/prouse-install.sh --ref main
 ```
 
-The installer uses an isolated `uv` tool environment. It can also select an official
-Git ref with `--source https://github.com/pumpkinredbean/ProUse.git --ref REF`; do not
-use that route for this unmerged candidate. Configuration and logs live under
-`~/.prouse` (or `PROUSE_HOME`) and survive tool updates.
+For the preview, replace **both** occurrences of `main` with `codex/cli-onboarding`.
+The installer sets up `uv` and Python 3.13 when needed, installs an isolated user
+command, and adds its bin directory to future shells. If the current shell does not
+find `prouse`, use the absolute executable path printed by the installer or reopen
+the terminal. Use `--no-modify-path` to manage PATH yourself.
+
+Configuration, policies, receipts, and logs live under `~/.prouse` (or `PROUSE_HOME`)
+and survive reinstallation. To update, rerun the installer and
+`prouse restart --background`.
 
 ## What it provides
 
@@ -78,24 +102,30 @@ and your own MCP client or transport.
 
 ## Requirements
 
-- Python **3.11+**
-- `uv` for the one-command isolated user install
+- macOS or Linux (the installer supplies `uv` and Python **3.13** when needed)
+- Python **3.11+** for a manual installation
 - Codex CLI / app-server for worker and direct-execution features
 - an MCP-capable client
 - your own supported model/subscription access
 
 ## Everyday commands
 
-`prouse start` stays in the foreground and Ctrl-C cleans up its owned state. A second
-start reports the existing instance rather than creating a duplicate.
+`prouse admin` starts the dashboard once; a second invocation reports the existing
+instance. Use `prouse start` or `prouse admin --foreground` to keep the server attached
+to the terminal instead; Ctrl-C then stops it.
 
 ```bash
 prouse status --json
 prouse logs -f
 prouse doctor --json
-prouse restart
+prouse restart --background
 prouse stop
 ```
+
+On a remote development host, configure LAN access with
+`prouse setup --workspace /path/to/project --host 0.0.0.0`. The CLI allows the detected
+LAN host and prints its address alongside localhost. Verify the LAN URL before
+sharing it with the operator.
 
 For explicit login autostart on macOS or Linux, use `prouse service install`; inspect it
 with `prouse service status` and disable/remove it with `prouse service uninstall`.
@@ -104,14 +134,17 @@ disable autostart. Windows user-service integration is not currently supported.
 
 ## Connect an MCP client
 
-ProUse uses client-owned stdio transport. A generic local MCP configuration is:
+ProUse uses client-owned stdio transport. Generate the configuration for this exact
+installation and verify it:
 
-```json
-{
-  "command": "/absolute/path/from-command-v/prouse",
-  "args": ["mcp", "serve"]
-}
+```bash
+prouse mcp config
+prouse mcp check --json
 ```
+
+The generated `mcpServers.prouse` entry includes the executable path and `PROUSE_HOME`;
+merge it into your client's existing configuration. The check performs a real
+`initialize`, tool discovery, and a policy-scoped workspace directory read, then exits.
 
 Do not detach that process: its stdin/stdout belong to the MCP client. ChatGPT requires
 a public HTTPS MCP endpoint or OpenAI's supported Secure MCP Tunnel; follow the current

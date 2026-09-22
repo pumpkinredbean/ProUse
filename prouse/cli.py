@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
+import fcntl
 import hashlib
 import json
 import os
@@ -131,7 +133,10 @@ def load_settings() -> dict:
 
 
 def validate_workspace(value: str) -> Path:
-    path = Path(value).expanduser().resolve(strict=True)
+    try:
+        path = Path(value).expanduser().resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise CLIError(f"Workspace is not accessible: {value}: {exc}", EXIT_USAGE) from None
     if not path.is_dir() or path == Path(path.anchor) or path == Path.home().resolve():
         raise CLIError("Workspace must be an existing explicit project directory")
     return path
@@ -141,10 +146,12 @@ def setup_command(args) -> int:
     p = paths()
     workspace_arg = args.workspace
     if not workspace_arg and not args.no_input and sys.stdin.isatty():
-        workspace_arg = input("Workspace directory: ").strip()
+        workspace_arg = input(f"Workspace directory [{Path.cwd()}]: ").strip() or str(Path.cwd())
     if not workspace_arg:
         raise CLIError("setup requires --workspace in non-interactive mode", EXIT_USAGE)
     workspace = validate_workspace(workspace_arg)
+    if args.port is not None and not 1 <= args.port <= 65535:
+        raise CLIError("--port must be between 1 and 65535", EXIT_USAGE)
     registry = read_json(p["registry"], None)
     created = registry is None
     if registry is None:
@@ -202,8 +209,6 @@ def setup_command(args) -> int:
     if args.host is not None:
         settings["host"] = args.host
     if args.port is not None:
-        if not 1 <= args.port <= 65535:
-            raise CLIError("--port must be between 1 and 65535", EXIT_USAGE)
         settings["port"] = args.port
     atomic_json(p["settings"], settings)
 
@@ -215,9 +220,14 @@ def setup_command(args) -> int:
         "workspace": str(workspace),
         "registry": str(p["registry"]),
         "admin_url": admin_urls(settings)[0],
-        "next_action": "Run `prouse start` in a terminal.",
+        "next_action": "Run `prouse admin` to start the dashboard.",
     }
-    emit(result, args.json)
+    if args.json:
+        emit(result, True)
+    else:
+        print(f"Workspace ready: {existing['id']} ({workspace})")
+        print(f"Configuration: {p['registry']}")
+        print("Next: prouse admin")
     return EXIT_OK
 
 
@@ -323,6 +333,53 @@ def allowed_hosts(settings: dict) -> list[str]:
     return sorted(set(values))
 
 
+def emit_runtime(result: dict, json_output=False) -> None:
+    if json_output:
+        emit(result, True)
+        return
+    print("ProUse Admin: " + result["status"].replace("_", " "))
+    for url in result.get("admin_urls", []):
+        print(f"Dashboard: {url}")
+    if result.get("admin_ready") or result.get("healthy"):
+        print("Logs: prouse logs -f    Stop: prouse stop")
+        print("MCP: prouse mcp check    Client config: prouse mcp config")
+    else:
+        print("Next: prouse admin")
+
+
+def start_background(settings: dict, args) -> int:
+    p = paths()
+    p["logs"].mkdir(parents=True, exist_ok=True, mode=0o700)
+    # The child owns its session and redirects every standard stream, so it survives
+    # the installing agent's terminal without requiring a login service.
+    with p["log"].open("a", encoding="utf-8") as output:
+        process = subprocess.Popen(
+            [sys.executable, "-m", "prouse.cli", "start", "--host", settings["host"],
+             "--port", str(settings["port"])],
+            stdin=subprocess.DEVNULL, stdout=output, stderr=subprocess.STDOUT,
+            start_new_session=True, cwd=p["home"],
+            env=dict(os.environ, PROUSE_HOME=str(p["home"]), PYTHONUNBUFFERED="1",
+                     _PROUSE_LOG_REDIRECTED=str(p["log"])),
+        )
+    deadline = time.monotonic() + args.start_timeout
+    while time.monotonic() < deadline:
+        result, code = status_value()
+        if code == EXIT_OK:
+            emit_runtime(result, args.json)
+            return EXIT_OK
+        if process.poll() is not None:
+            raise CLIError(f"Admin could not start (exit {process.returncode}). Run `prouse logs` or inspect {p['log']}")
+        time.sleep(0.1)
+    # Only terminate the exact child we spawned, never an unrelated listener.
+    process.terminate()
+    try:
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+    raise CLIError(f"Admin did not become ready within {args.start_timeout:g}s. Run `prouse logs`.")
+
+
 def start_command(args) -> int:
     p = paths()
     if not p["registry"].is_file():
@@ -333,19 +390,37 @@ def start_command(args) -> int:
         settings.update(host=record["host"], port=record["port"])
         result = {"status": "already_running", "pid": record["pid"], "healthy": health(settings),
                   "admin_urls": admin_urls(settings)}
-        emit(result, getattr(args, "json", False))
+        emit_runtime(result, getattr(args, "json", False))
         return EXIT_OK if result["healthy"] else EXIT_ERROR
     if args.host is not None:
         settings["host"] = args.host
     if args.port is not None:
         settings["port"] = args.port
+    if not 1 <= int(settings["port"]) <= 65535:
+        raise CLIError("--port must be between 1 and 65535", EXIT_USAGE)
+    if getattr(args, "background", False):
+        return start_background(settings, args)
+
+    p["run"].mkdir(parents=True, exist_ok=True, mode=0o700)
+    with (p["run"] / "admin.lock").open("a") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise CLIError("Another Admin is starting for this PROUSE_HOME. Run `prouse status`.") from None
+        return run_admin(settings)
+
+
+def run_admin(settings: dict) -> int:
+    p = paths()
 
     from admin_server import Admin, Server
     p["logs"].mkdir(parents=True, exist_ok=True, mode=0o700)
     p["run"].mkdir(parents=True, exist_ok=True, mode=0o700)
-    log = p["log"].open("a", encoding="utf-8")
+    log = None
     old_out, old_err = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = Tee(sys.stdout, log), Tee(sys.stderr, log)
+    if os.environ.get("_PROUSE_LOG_REDIRECTED") != str(p["log"]):
+        log = p["log"].open("a", encoding="utf-8")
+        sys.stdout, sys.stderr = Tee(sys.stdout, log), Tee(sys.stderr, log)
     server = None
     wrote = False
     try:
@@ -384,7 +459,8 @@ def start_command(args) -> int:
             if current.get("pid") == os.getpid():
                 p["instance"].unlink(missing_ok=True)
         sys.stdout, sys.stderr = old_out, old_err
-        log.close()
+        if log:
+            log.close()
 
 
 def status_value() -> tuple[dict, int]:
@@ -414,7 +490,7 @@ def status_value() -> tuple[dict, int]:
 
 def status_command(args) -> int:
     result, code = status_value()
-    emit(result, args.json)
+    emit_runtime(result, args.json)
     return code
 
 
@@ -444,7 +520,11 @@ def stop_command(args) -> int:
 
 
 def restart_command(args) -> int:
-    stop_command(args)
+    # A JSON invocation must return exactly one result, including for restart.
+    import contextlib
+    import io
+    with contextlib.redirect_stdout(io.StringIO()):
+        stop_command(args)
     return start_command(args)
 
 
@@ -500,10 +580,63 @@ def doctor_command(args) -> int:
 
 
 def mcp_command() -> dict:
-    executable = shutil.which("prouse")
-    if executable:
-        return {"command": executable, "args": ["mcp", "serve"]}
-    return {"command": sys.executable, "args": ["-m", "prouse.cli", "mcp", "serve"]}
+    # PATH can contain another ProUse installation. Use this interpreter's entry
+    # point so the handoff and probe exercise the command the operator invoked.
+    executable = Path(sys.executable).parent / "prouse"
+    if executable.is_file():
+        command = {"command": str(executable), "args": ["mcp", "serve"]}
+    else:
+        command = {"command": sys.executable, "args": ["-m", "prouse.cli", "mcp", "serve"]}
+    command["env"] = {"PROUSE_HOME": str(home())}
+    return command
+
+
+async def probe_mcp(args) -> dict:
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    spec = mcp_command()
+    params = StdioServerParameters(command=spec["command"], args=spec["args"],
+                                   env=dict(os.environ, **spec["env"]))
+    async with stdio_client(params) as (reader, writer):
+        async with ClientSession(reader, writer) as session:
+            initialized = await session.initialize()
+            listed = await session.list_tools()
+            workspaces = await session.call_tool("list_workspaces", {})
+            if workspaces.isError or not workspaces.structuredContent:
+                raise CLIError("MCP initialized but list_workspaces failed")
+            eligible = [item for item in workspaces.structuredContent["workspaces"]
+                        if item.get("enabled") and item.get("context_available")]
+            if args.workspace_id:
+                eligible = [item for item in eligible if item["workspace_id"] == args.workspace_id]
+            if not eligible:
+                raise CLIError("MCP initialized, but no selected workspace has readable context")
+            workspace_id = eligible[0]["workspace_id"]
+            response = await session.call_tool("list_directory", {"workspace_id": workspace_id, "limit": 1})
+            if response.isError:
+                raise CLIError(f"MCP initialized, but the context read for {workspace_id} failed")
+            return {"status": "ok", "handshake": "verified", "server": initialized.serverInfo.name,
+                    "tools": len(listed.tools), "workspace_id": workspace_id,
+                    "workspace_read": "verified", "client_connection": "not_verified"}
+
+
+def mcp_check_command(args) -> int:
+    def detail(exc):
+        if isinstance(exc, BaseExceptionGroup):
+            return "; ".join(detail(item) for item in exc.exceptions)
+        return str(exc) or type(exc).__name__
+
+    async def check():
+        async with asyncio.timeout(args.timeout):
+            return await probe_mcp(args)
+    try:
+        result = asyncio.run(check())
+    except TimeoutError:
+        raise CLIError(f"MCP check timed out after {args.timeout:g}s") from None
+    except Exception as exc:
+        raise CLIError(f"MCP check failed: {detail(exc)}. Run `prouse doctor --json`.") from None
+    emit(result, args.json)
+    return EXIT_OK
 
 
 def mcp_serve_command(args) -> int:
@@ -631,7 +764,8 @@ def service_command(args) -> int:
 
 
 def parser() -> argparse.ArgumentParser:
-    root = argparse.ArgumentParser(prog="prouse", description="ProUse local MCP and Admin control")
+    root = argparse.ArgumentParser(prog="prouse", description="ProUse local MCP and Admin control",
+        epilog="Get started: prouse setup --workspace .   Then: prouse admin")
     root.add_argument("--version", action="version", version="ProUse 0.2.0")
     commands = root.add_subparsers(dest="command")
 
@@ -648,6 +782,16 @@ def parser() -> argparse.ArgumentParser:
     start.add_argument("--host")
     start.add_argument("--port", type=int)
     start.add_argument("--json", action="store_true")
+    start.add_argument("--background", action="store_true", help="start and return after the health check")
+    start.add_argument("--start-timeout", type=float, default=15)
+
+    admin = commands.add_parser("admin", help="start the dashboard in the background")
+    admin.add_argument("--host")
+    admin.add_argument("--port", type=int)
+    admin.add_argument("--foreground", dest="background", action="store_false",
+                       help="keep Admin attached to this terminal")
+    admin.add_argument("--start-timeout", type=float, default=15)
+    admin.add_argument("--json", action="store_true")
 
     for name in ("stop", "restart"):
         item = commands.add_parser(name, help=("stop the owned Admin process" if name == "stop" else "stop then run Admin in the foreground"))
@@ -655,6 +799,9 @@ def parser() -> argparse.ArgumentParser:
         item.add_argument("--host")
         item.add_argument("--port", type=int)
         item.add_argument("--json", action="store_true")
+        if name == "restart":
+            item.add_argument("--background", action="store_true")
+            item.add_argument("--start-timeout", type=float, default=15)
 
     status = commands.add_parser("status", help="show local readiness")
     status.add_argument("--json", action="store_true")
@@ -669,6 +816,11 @@ def parser() -> argparse.ArgumentParser:
     serve = mcp_commands.add_parser("serve", help="run client-owned stdio MCP")
     serve.add_argument("--registry", type=Path)
     serve.add_argument("--check-config", action="store_true")
+    mcp_commands.add_parser("config", help="print the local MCP client JSON configuration")
+    check = mcp_commands.add_parser("check", help="verify a real stdio handshake and workspace read")
+    check.add_argument("--workspace-id")
+    check.add_argument("--timeout", type=float, default=20)
+    check.add_argument("--json", action="store_true")
 
     service = commands.add_parser("service", help="manage an isolated user login service")
     service.add_argument("action", choices=("install", "status", "uninstall"))
@@ -687,9 +839,7 @@ def no_args(root: argparse.ArgumentParser) -> int:
         print("\nNot configured. Run: prouse setup --workspace /path/to/project --no-input", file=sys.stderr)
         return EXIT_USAGE
     result, code = status_value()
-    emit(result)
-    if code != EXIT_OK:
-        print("Next: run `prouse start` in a terminal.")
+    emit_runtime(result)
     return code
 
 
@@ -700,19 +850,25 @@ def main(argv=None) -> int:
         if args.command is None:
             return no_args(root)
         handlers = {
-            "setup": setup_command, "start": start_command, "stop": stop_command,
+            "setup": setup_command, "start": start_command, "admin": start_command, "stop": stop_command,
             "restart": restart_command, "status": status_command, "logs": logs_command,
             "doctor": doctor_command, "service": service_command,
         }
         if args.command == "mcp":
+            if args.mcp_command == "config":
+                emit({"mcpServers": {"prouse": mcp_command()}}, True)
+                return EXIT_OK
+            if args.mcp_command == "check":
+                return mcp_check_command(args)
             return mcp_serve_command(args)
         return handlers[args.command](args)
-    except CLIError as exc:
+    except (CLIError, OSError, ValueError) as exc:
+        code = exc.code if isinstance(exc, CLIError) else EXIT_ERROR
         if getattr(args, "json", False):
-            emit({"status": "error", "error": str(exc), "exit_code": exc.code}, True)
+            emit({"status": "error", "error": str(exc), "exit_code": code}, True)
         else:
             print(f"prouse: {exc}", file=sys.stderr)
-        return exc.code
+        return code
     except KeyboardInterrupt:
         return 130
 

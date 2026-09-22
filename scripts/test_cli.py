@@ -103,6 +103,79 @@ class CLITests(unittest.TestCase):
         self.assertEqual(code, cli.EXIT_NOT_RUNNING)
         self.assertEqual(json.loads(output)["status"], "stopped")
 
+    def test_setup_bad_path_or_port_does_not_create_configuration(self):
+        for extra in (["--workspace", str(self.base / "missing")],
+                      ["--workspace", str(self.workspace), "--port", "0"]):
+            code, output, _ = self.run_cli(["setup", "--no-input", "--json", *extra])
+            self.assertEqual(code, cli.EXIT_USAGE, output)
+            self.assertEqual(json.loads(output)["status"], "error")
+            self.assertFalse(cli.paths()["registry"].exists())
+
+    def test_admin_background_survives_launcher_and_restarts(self):
+        self.setup(self.free_port())
+        launcher = self.process("admin", "--json")
+        stdout, stderr = launcher.communicate(timeout=10)
+        self.assertEqual(launcher.returncode, 0, stderr)
+        first = json.loads(stdout)
+        self.assertTrue(first["admin_ready"])
+        self.assertNotEqual(first["pid"], launcher.pid)
+        self.assertTrue(cli.status_value()[0]["admin_ready"])
+        duplicate = self.process("admin", "--json")
+        stdout, stderr = duplicate.communicate(timeout=10)
+        self.assertEqual(duplicate.returncode, 0, stderr)
+        self.assertEqual(json.loads(stdout)["pid"], first["pid"])
+
+        restarted = self.process("restart", "--background", "--json")
+        stdout, stderr = restarted.communicate(timeout=10)
+        self.assertEqual(restarted.returncode, 0, stderr)
+        second = json.loads(stdout)  # Exactly one JSON object, including stop/start.
+        self.assertTrue(second["admin_ready"])
+        self.assertNotEqual(first["pid"], second["pid"])
+        self.assertEqual(self.run_cli(["stop"])[0], 0)
+        self.assertEqual(cli.status_value()[1], cli.EXIT_NOT_RUNNING)
+
+    def test_background_port_conflict_is_reported_to_launcher(self):
+        port = self.free_port()
+        self.setup(port)
+        with socket.socket() as blocker:
+            blocker.bind(("127.0.0.1", port))
+            blocker.listen()
+            launcher = self.process("admin", "--json")
+            stdout, stderr = launcher.communicate(timeout=10)
+        self.assertEqual(launcher.returncode, cli.EXIT_ERROR, stderr)
+        self.assertEqual(json.loads(stdout)["status"], "error")
+        self.assertIn("Cannot start Admin", cli.paths()["log"].read_text())
+        self.assertFalse(cli.status_value()[0]["running"])
+
+    def test_mcp_config_and_real_check_use_the_selected_instance(self):
+        setup = self.setup()
+        code, output, _ = self.run_cli(["mcp", "config"])
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(output)["mcpServers"]["prouse"]["env"],
+                         {"PROUSE_HOME": str(self.home)})
+        checker = self.process("mcp", "check", "--workspace-id", setup["workspace_id"], "--json")
+        stdout, stderr = checker.communicate(timeout=15)
+        self.assertEqual(checker.returncode, 0, stderr + stdout)
+        result = json.loads(stdout)
+        self.assertEqual(result["handshake"], "verified")
+        self.assertEqual(result["workspace_read"], "verified")
+        self.assertEqual(result["workspace_id"], setup["workspace_id"])
+        self.assertEqual(result["client_connection"], "not_verified")
+        checker = self.process("mcp", "check", "--workspace-id", "missing", "--json")
+        stdout, stderr = checker.communicate(timeout=15)
+        self.assertEqual(checker.returncode, cli.EXIT_ERROR, stderr + stdout)
+        self.assertEqual(json.loads(stdout)["status"], "error")
+        self.assertIn("no selected workspace", json.loads(stdout)["error"])
+
+    def test_mcp_config_does_not_choose_another_installation_from_path(self):
+        other = self.base / "other installation"
+        other.mkdir()
+        wrong = other / "prouse"
+        wrong.write_text("#!/bin/sh\nexit 42\n")
+        wrong.chmod(0o755)
+        with mock.patch.dict(os.environ, {"PATH": str(other) + os.pathsep + os.environ["PATH"]}):
+            self.assertNotEqual(cli.mcp_command()["command"], str(wrong))
+
     def test_foreground_start_duplicate_restart_and_stop(self):
         self.setup(self.free_port())
         started = self.process("start")
