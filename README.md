@@ -17,46 +17,32 @@ research and orchestration layer while local tools perform mechanical work.
 Copy this prompt into a local coding agent with terminal access:
 
 ```text
-Install ProUse for this project. Read and follow:
+Install and set up ProUse for this project by following:
 https://raw.githubusercontent.com/pumpkinredbean/ProUse/main/docs/install-for-agents.md
 
 Install missing prerequisites, preserve my existing settings, register the current
 project, and start the Admin dashboard in the background. Verify the dashboard and
 the MCP handshake with a workspace read. Give me the dashboard URL, MCP client
-configuration, and the stop/restart commands. Complete the local setup; ask me only
-for sign-in or connection approval that requires my participation.
+configuration, and the stop/restart commands. Ask me only for sign-in or connection
+approval that requires my participation.
 ```
-
-**Trying a preview?** The `main` URL works after this change is merged. Until then,
-replace `main` in the prompt URL with `codex/cli-onboarding` and add
-`Install that same ref: codex/cli-onboarding.` If your agent already has this checkout,
-ask it to follow [the local installation guide](docs/install-for-agents.md).
 
 ### Or use your terminal
 
-From this checkout:
+Run these commands from your project directory:
 
 ```bash
-sh install.sh --source .
-prouse setup --workspace "/absolute/path/to/project"
+curl -fsSL https://raw.githubusercontent.com/pumpkinredbean/ProUse/main/install.sh | sh
+prouse setup --workspace .
 prouse admin
 ```
 
 `prouse admin` starts in the background, checks that the server is ready, and prints
 the dashboard URL. No virtualenv activation or terminal left running is needed.
 
-For a published Git ref, download its installer and install that same ref:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/pumpkinredbean/ProUse/main/install.sh -o /tmp/prouse-install.sh
-sh /tmp/prouse-install.sh --ref main
-```
-
-For the preview, replace **both** occurrences of `main` with `codex/cli-onboarding`.
 The installer sets up `uv` and Python 3.13 when needed, installs an isolated user
-command, and adds its bin directory to future shells. If the current shell does not
-find `prouse`, use the absolute executable path printed by the installer or reopen
-the terminal. Use `--no-modify-path` to manage PATH yourself.
+command, and adds it to future shells. If `prouse` is not found, reopen your terminal
+or use the executable path printed by the installer.
 
 Configuration, policies, receipts, and logs live under `~/.prouse` (or `PROUSE_HOME`)
 and survive reinstallation. To update, rerun the installer and

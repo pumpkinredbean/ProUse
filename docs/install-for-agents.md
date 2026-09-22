@@ -8,8 +8,8 @@ Browser sign-in and client authorization remain the user's actions.
 
 Use the user's current project as the workspace. Record its absolute path **before**
 changing into a ProUse checkout; do not accidentally register the installer checkout.
-If the user supplied a checkout, branch, or commit, use it. When this guide came from
-a preview URL, install that same ref. Otherwise use the official `main` branch.
+Use the official installer below. If the user explicitly supplied a local ProUse
+checkout for installation, use that checkout instead.
 
 ## Install or update
 
@@ -18,19 +18,15 @@ The installer supports macOS and Linux. It bootstraps `uv` from
 missing and lets uv supply Python 3.13. `PROUSE_PYTHON` can override the interpreter;
 manual installations require Python 3.11+. No sudo or virtualenv activation is needed.
 
-From an existing ProUse checkout, install the isolated user command with:
-
-```bash
-sh install.sh --source .
-```
-
-Without a checkout, fetch the installer from the selected official ref and install
-that same ref. This example uses `main`; replace **both** occurrences for a preview:
+Download and run the official installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pumpkinredbean/ProUse/main/install.sh -o /tmp/prouse-install.sh
-sh /tmp/prouse-install.sh --ref main
+sh /tmp/prouse-install.sh
 ```
+
+For an explicitly supplied local checkout, run `sh install.sh --source .` from that
+checkout instead.
 
 The installer uses `uv tool install --force --reinstall`, so rerunning it updates even
 when the package version has not changed. It does not edit `~/.prouse`. It reports the
@@ -38,7 +34,7 @@ installed executable's absolute path and updates future shells if its bin direct
 is missing from PATH. Use that absolute path for all following commands when the
 agent's current PATH has not refreshed. `--no-modify-path` disables shell changes.
 A source checkout is not needed after installation. Do not substitute a PyPI package
-name or a different source if the selected ref is unavailable; report that error.
+name or a different source if the official installer is unavailable; report that error.
 
 ## Configure without prompts
 
