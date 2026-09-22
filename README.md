@@ -34,10 +34,10 @@ Run these commands from your project directory:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pumpkinredbean/ProUse/main/install.sh | sh
 prouse setup --workspace .
-prouse admin
+prouse start
 ```
 
-`prouse admin` starts in the background, checks that the server is ready, and prints
+`prouse start` starts in the background, checks that the server is ready, and prints
 the dashboard URL. No virtualenv activation or terminal left running is needed.
 
 The installer sets up `uv` and Python 3.13 when needed, installs an isolated user
@@ -46,7 +46,7 @@ or use the executable path printed by the installer.
 
 Configuration, policies, receipts, and logs live under `~/.prouse` (or `PROUSE_HOME`)
 and survive reinstallation. To update, rerun the installer and
-`prouse restart --background`.
+`prouse restart`.
 
 ## What it provides
 
@@ -96,15 +96,15 @@ and your own MCP client or transport.
 
 ## Everyday commands
 
-`prouse admin` starts the dashboard once; a second invocation reports the existing
-instance. Use `prouse start` or `prouse admin --foreground` to keep the server attached
+`prouse start` starts the dashboard once; a second invocation reports the existing
+instance. Use `prouse run` to keep the server attached
 to the terminal instead; Ctrl-C then stops it.
 
 ```bash
 prouse status --json
 prouse logs -f
 prouse doctor --json
-prouse restart --background
+prouse restart
 prouse stop
 ```
 

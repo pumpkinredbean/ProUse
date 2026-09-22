@@ -38,9 +38,9 @@ jobs:
           /tmp/prouse-wheel-test/bin/python -c 'from importlib import resources; assert "ProUse" in resources.files("prouse_assets").joinpath("admin_ui", "index.html").read_text()'
           export PROUSE_HOME=/tmp/prouse-wheel-home
           trap '/tmp/prouse-wheel-test/bin/prouse stop' EXIT
-          /tmp/prouse-wheel-test/bin/prouse admin --json
+          /tmp/prouse-wheel-test/bin/prouse start --json
           /tmp/prouse-wheel-test/bin/prouse status --json
           /tmp/prouse-wheel-test/bin/prouse mcp check --json
-          /tmp/prouse-wheel-test/bin/prouse restart --background --json
+          /tmp/prouse-wheel-test/bin/prouse restart --json
       - name: Release checks
         run: python scripts/release_check.py

@@ -3,6 +3,11 @@
 Contributions are welcome. Keep changes focused, testable, and free of machine-specific
 state or credentials.
 
+See [CLI design](docs/cli-design.md) for the command hierarchy, lifecycle contract,
+module responsibilities, and the reference projects behind the design. Add command
+adapters under `prouse/commands/`; keep operation logic in configuration, runtime,
+or integration modules rather than growing the entry point.
+
 ## Development setup
 
 ```bash

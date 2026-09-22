@@ -22,7 +22,7 @@ prouse = "prouse.cli:main"
 Repository = "https://github.com/pumpkinredbean/ProUse"
 
 [tool.setuptools]
-packages = ["prouse", "prouse.examples", "prouse_assets", "prouse_assets.admin_ui"]
+packages = ["prouse", "prouse.commands", "prouse.runtime", "prouse.integrations", "prouse.examples", "prouse_assets", "prouse_assets.admin_ui"]
 py-modules = [
   "admin_control",
   "admin_server",

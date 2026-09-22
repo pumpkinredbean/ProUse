@@ -16,6 +16,11 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from prouse import cli
+from prouse.configuration import Configuration
+from prouse.errors import ExitCode
+from prouse.integrations import mcp, services
+from prouse.runtime.admin import AdminRuntime
+from prouse.state import InstancePaths, atomic_json
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -32,9 +37,12 @@ class CLITests(unittest.TestCase):
         (self.workspace / "README.md").write_text("hello from project\n")
         self.env = mock.patch.dict(os.environ, {"PROUSE_HOME": str(self.home)}, clear=False)
         self.env.start()
+        self.paths = InstancePaths.from_environment()
+        self.config = Configuration(self.paths)
+        self.runtime = AdminRuntime(self.config)
 
     def tearDown(self):
-        record, _ = cli.instance_record()
+        record, _ = self.runtime.instance.current()
         if record:
             with contextlib.redirect_stdout(io.StringIO()):
                 cli.main(["stop", "--timeout", "3"])
@@ -63,7 +71,7 @@ class CLITests(unittest.TestCase):
     def wait_ready(self, process, timeout=8):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
-            result, _ = cli.status_value()
+            result = self.runtime.status()
             if result["admin_ready"]:
                 return result
             if process.poll() is not None:
@@ -83,56 +91,56 @@ class CLITests(unittest.TestCase):
         registry_path = Path(first["registry"])
         registry = json.loads(registry_path.read_text())
         registry["workspaces"][0]["label"] = "User preserved label"
-        cli.atomic_json(registry_path, registry)
-        settings = cli.load_settings()
+        atomic_json(registry_path, registry)
+        settings = self.config.settings_document()
         settings["user_setting"] = "keep"
-        cli.atomic_json(cli.paths()["settings"], settings)
+        atomic_json(self.paths.settings, settings)
 
         second = self.setup()
         self.assertFalse(second["workspace_added"])
         after = json.loads(registry_path.read_text())
         self.assertEqual(after["workspaces"][0]["label"], "User preserved label")
-        self.assertEqual(cli.load_settings()["user_setting"], "keep")
+        self.assertEqual(self.config.settings_document()["user_setting"], "keep")
         self.assertIn(".state", Path(after["state_dir"]).parts)
 
     def test_noninteractive_missing_input_and_json_exit_codes(self):
         code, output, _ = self.run_cli(["setup", "--no-input", "--json"])
-        self.assertEqual(code, cli.EXIT_USAGE)
-        self.assertEqual(json.loads(output)["exit_code"], cli.EXIT_USAGE)
+        self.assertEqual(code, ExitCode.USAGE)
+        self.assertEqual(json.loads(output)["exit_code"], ExitCode.USAGE)
         code, output, _ = self.run_cli(["status", "--json"])
-        self.assertEqual(code, cli.EXIT_NOT_RUNNING)
+        self.assertEqual(code, ExitCode.NOT_RUNNING)
         self.assertEqual(json.loads(output)["status"], "stopped")
 
     def test_setup_bad_path_or_port_does_not_create_configuration(self):
         for extra in (["--workspace", str(self.base / "missing")],
                       ["--workspace", str(self.workspace), "--port", "0"]):
             code, output, _ = self.run_cli(["setup", "--no-input", "--json", *extra])
-            self.assertEqual(code, cli.EXIT_USAGE, output)
+            self.assertEqual(code, ExitCode.USAGE, output)
             self.assertEqual(json.loads(output)["status"], "error")
-            self.assertFalse(cli.paths()["registry"].exists())
+            self.assertFalse(self.paths.registry.exists())
 
-    def test_admin_background_survives_launcher_and_restarts(self):
+    def test_start_survives_launcher_and_restart_defaults_to_background(self):
         self.setup(self.free_port())
-        launcher = self.process("admin", "--json")
+        launcher = self.process("start", "--json")
         stdout, stderr = launcher.communicate(timeout=10)
         self.assertEqual(launcher.returncode, 0, stderr)
         first = json.loads(stdout)
         self.assertTrue(first["admin_ready"])
         self.assertNotEqual(first["pid"], launcher.pid)
-        self.assertTrue(cli.status_value()[0]["admin_ready"])
-        duplicate = self.process("admin", "--json")
+        self.assertTrue(self.runtime.status()["admin_ready"])
+        duplicate = self.process("start", "--json")
         stdout, stderr = duplicate.communicate(timeout=10)
         self.assertEqual(duplicate.returncode, 0, stderr)
         self.assertEqual(json.loads(stdout)["pid"], first["pid"])
 
-        restarted = self.process("restart", "--background", "--json")
+        restarted = self.process("restart", "--json")
         stdout, stderr = restarted.communicate(timeout=10)
         self.assertEqual(restarted.returncode, 0, stderr)
         second = json.loads(stdout)  # Exactly one JSON object, including stop/start.
         self.assertTrue(second["admin_ready"])
         self.assertNotEqual(first["pid"], second["pid"])
         self.assertEqual(self.run_cli(["stop"])[0], 0)
-        self.assertEqual(cli.status_value()[1], cli.EXIT_NOT_RUNNING)
+        self.assertEqual(self.run_cli(["status", "--json"])[0], ExitCode.NOT_RUNNING)
 
     def test_background_port_conflict_is_reported_to_launcher(self):
         port = self.free_port()
@@ -140,12 +148,12 @@ class CLITests(unittest.TestCase):
         with socket.socket() as blocker:
             blocker.bind(("127.0.0.1", port))
             blocker.listen()
-            launcher = self.process("admin", "--json")
+            launcher = self.process("start", "--json")
             stdout, stderr = launcher.communicate(timeout=10)
-        self.assertEqual(launcher.returncode, cli.EXIT_ERROR, stderr)
+        self.assertEqual(launcher.returncode, ExitCode.ERROR, stderr)
         self.assertEqual(json.loads(stdout)["status"], "error")
-        self.assertIn("Cannot start Admin", cli.paths()["log"].read_text())
-        self.assertFalse(cli.status_value()[0]["running"])
+        self.assertIn("Cannot start Admin", self.paths.log.read_text())
+        self.assertFalse(self.runtime.status()["running"])
 
     def test_mcp_config_and_real_check_use_the_selected_instance(self):
         setup = self.setup()
@@ -163,7 +171,7 @@ class CLITests(unittest.TestCase):
         self.assertEqual(result["client_connection"], "not_verified")
         checker = self.process("mcp", "check", "--workspace-id", "missing", "--json")
         stdout, stderr = checker.communicate(timeout=15)
-        self.assertEqual(checker.returncode, cli.EXIT_ERROR, stderr + stdout)
+        self.assertEqual(checker.returncode, ExitCode.ERROR, stderr + stdout)
         self.assertEqual(json.loads(stdout)["status"], "error")
         self.assertIn("no selected workspace", json.loads(stdout)["error"])
 
@@ -174,15 +182,16 @@ class CLITests(unittest.TestCase):
         wrong.write_text("#!/bin/sh\nexit 42\n")
         wrong.chmod(0o755)
         with mock.patch.dict(os.environ, {"PATH": str(other) + os.pathsep + os.environ["PATH"]}):
-            self.assertNotEqual(cli.mcp_command()["command"], str(wrong))
+            self.assertNotEqual(mcp.command(self.paths)["command"], str(wrong))
 
-    def test_foreground_start_duplicate_restart_and_stop(self):
+    def test_foreground_run_duplicate_start_restart_and_stop(self):
         self.setup(self.free_port())
-        started = self.process("start")
+        started = self.process("run", "--json")
         status = self.wait_ready(started)
+        self.assertEqual(status["pid"], started.pid)
         self.assertEqual(status["local_installation"]["status"], "ready")
         self.assertEqual(self.run_cli(["doctor", "--json"])[0], 0)
-        self.assertTrue(cli.paths()["log"].is_file())
+        self.assertTrue(self.paths.log.is_file())
         duplicate = subprocess.run([sys.executable, "-m", "prouse.cli", "start", "--json"],
             cwd=self.base, env=dict(os.environ, PYTHONPATH=PYTHONPATH, PROUSE_HOME=str(self.home)),
             capture_output=True, text=True, timeout=5)
@@ -190,8 +199,10 @@ class CLITests(unittest.TestCase):
         self.assertEqual(json.loads(duplicate.stdout)["status"], "already_running")
         code, output, _ = self.run_cli(["stop", "--json"])
         self.assertEqual(code, 0, output)
-        started.communicate(timeout=5)
-        self.assertEqual(cli.status_value()[1], cli.EXIT_NOT_RUNNING)
+        stdout, stderr = started.communicate(timeout=5)
+        self.assertEqual(started.returncode, 0, stderr)
+        self.assertEqual(json.loads(stdout)["pid"], started.pid)
+        self.assertEqual(self.run_cli(["status", "--json"])[0], ExitCode.NOT_RUNNING)
 
         restarted = self.process("restart")
         self.wait_ready(restarted)
@@ -205,27 +216,28 @@ class CLITests(unittest.TestCase):
             blocker.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             blocker.bind(("127.0.0.1", port))
             blocker.listen()
-            process = self.process("start")
+            process = self.process("run")
             stdout, stderr = process.communicate(timeout=5)
-        self.assertEqual(process.returncode, cli.EXIT_ERROR, stdout + stderr)
+        self.assertEqual(process.returncode, ExitCode.ERROR, stdout + stderr)
         self.assertIn("Cannot start Admin", stderr)
-        self.assertFalse(cli.paths()["instance"].exists())
+        self.assertFalse(self.paths.instance.exists())
 
-        cli.atomic_json(cli.paths()["instance"], {
+        atomic_json(self.paths.instance, {
             "pid": os.getpid(), "fingerprint": "not-the-current-process", "home": str(self.home)})
         code, output, _ = self.run_cli(["status", "--json"])
-        self.assertEqual(code, cli.EXIT_NOT_RUNNING)
+        self.assertEqual(code, ExitCode.NOT_RUNNING)
         self.assertEqual(json.loads(output)["recovered"], "stale instance state")
-        self.assertFalse(cli.paths()["instance"].exists())
+        self.assertFalse(self.paths.instance.exists())
 
     def test_service_templates_use_argv_and_instance_home(self):
         for kind in ("launchd", "systemd"):
-            target, content, actions = cli.service_spec(kind)
-            rendered = content.decode() if isinstance(content, bytes) else content
+            spec = services.definition(self.paths, kind)
+            rendered = spec.content.decode()
             self.assertIn(str(self.home), rendered)
             self.assertIn("prouse.cli", rendered)
-            self.assertTrue(actions)
-            self.assertIn(cli.service_identity(), target.name)
+            self.assertTrue(spec.install)
+            self.assertIn("run", rendered)
+            self.assertNotIn("start</string>", rendered)
             for action in ("install", "status", "uninstall"):
                 code, output, error = self.run_cli(["service", action, "--manager", kind,
                                                     "--dry-run", "--json"])
@@ -251,6 +263,105 @@ class CLITests(unittest.TestCase):
                         "prouse stop", "prouse restart", '"mcp", "serve"'):
             self.assertIn(command, text)
         self.assertIn("not_verified", text)
+
+    def test_json_argument_errors_and_global_flag(self):
+        for arguments in (["start", "--port", "bad"], ["start", "--start-timeout", "nan"],
+                          ["restart", "--timeout", "-1"], ["logs", "--lines", "-1"],
+                          ["mcp", "check", "--timeout", "inf"], ["service"], ["unknown"]):
+            with self.subTest(arguments=arguments):
+                code, output, errors = self.run_cli(["--json", *arguments])
+                self.assertEqual(code, ExitCode.USAGE, output)
+                self.assertEqual(json.loads(output)["exit_code"], ExitCode.USAGE)
+                self.assertEqual(errors, "")
+        code, output, _ = self.run_cli(["--json", "status"])
+        self.assertEqual(code, ExitCode.NOT_RUNNING)
+        self.assertEqual(json.loads(output)["status"], "stopped")
+        code, output, _ = self.run_cli(["start", "--port", "bad", "--json"])
+        self.assertEqual(code, ExitCode.USAGE)
+        self.assertEqual(json.loads(output)["status"], "error")
+
+    def test_concurrent_starts_share_one_owned_process(self):
+        self.setup(self.free_port())
+        launchers = [self.process("start", "--json") for _ in range(2)]
+        results = []
+        for launcher in launchers:
+            stdout, stderr = launcher.communicate(timeout=12)
+            self.assertEqual(launcher.returncode, 0, stdout + stderr)
+            results.append(json.loads(stdout))
+        self.assertEqual(results[0]["pid"], results[1]["pid"])
+        self.assertEqual({item["status"] for item in results}, {"running", "already_running"})
+
+    def test_invalid_restart_preserves_running_instance_and_stop_ignores_bad_settings(self):
+        self.setup(self.free_port())
+        launcher = self.process("start", "--json")
+        stdout, stderr = launcher.communicate(timeout=10)
+        self.assertEqual(launcher.returncode, 0, stderr)
+        pid = json.loads(stdout)["pid"]
+        code, output, _ = self.run_cli(["restart", "--port", "0", "--json"])
+        self.assertEqual(code, ExitCode.USAGE, output)
+        self.assertEqual(self.runtime.status()["pid"], pid)
+        self.paths.settings.write_text('{"host": "invalid host", "port": 0}')
+        code, output, _ = self.run_cli(["doctor", "--json"])
+        self.assertEqual(code, ExitCode.ERROR)
+        self.assertEqual(json.loads(output)["status"], "error")
+        self.assertEqual(self.run_cli(["stop", "--json"])[0], 0)
+        self.assertIsNone(self.runtime.instance.current()[0])
+
+    def test_start_timeout_leaves_no_owned_process(self):
+        self.setup(self.free_port())
+        launcher = self.process("start", "--start-timeout", "0.001", "--json")
+        stdout, stderr = launcher.communicate(timeout=10)
+        self.assertEqual(launcher.returncode, ExitCode.ERROR, stderr)
+        self.assertIn("did not become ready", json.loads(stdout)["error"])
+        self.assertFalse(self.runtime.status()["running"])
+
+    def test_foreign_instance_receipt_is_never_signalled(self):
+        from prouse.runtime.process import fingerprint
+        self.setup()
+        atomic_json(self.paths.instance, {
+            "pid": os.getpid(), "fingerprint": fingerprint(os.getpid()),
+            "home": str(self.base / "another instance"), "host": "127.0.0.1",
+            "port": 8848, "started_at": time.time(),
+        })
+        with mock.patch("prouse.runtime.admin.os.kill") as kill:
+            code, output, _ = self.run_cli(["stop", "--json"])
+        self.assertEqual(code, 0, output)
+        kill.assert_not_called()
+        self.assertEqual(json.loads(output)["status"], "already_stopped")
+
+    def test_repeat_setup_recognizes_relative_workspace_root(self):
+        self.setup()
+        registry = json.loads(self.paths.registry.read_text())
+        registry["workspaces"][0]["root"] = os.path.relpath(self.workspace, self.paths.config)
+        atomic_json(self.paths.registry, registry)
+        self.assertFalse(self.setup()["workspace_added"])
+        self.assertEqual(len(self.config.registry().workspaces), 1)
+
+    def test_setup_bad_settings_is_reported_without_overwriting_registry(self):
+        self.setup()
+        before = self.paths.registry.read_bytes()
+        self.paths.settings.write_text('[]')
+        code, output, _ = self.run_cli(["setup", "--workspace", str(self.workspace), "--json"])
+        self.assertEqual(code, ExitCode.ERROR, output)
+        self.assertEqual(json.loads(output)["status"], "error")
+        self.assertEqual(self.paths.registry.read_bytes(), before)
+
+    def test_logs_tail_zero_and_follow_include_recent_lines(self):
+        from prouse.runtime.logs import lines
+        self.paths.prepare_runtime()
+        self.paths.log.write_text("first\nsecond\nlast\n")
+        self.assertEqual(self.run_cli(["logs", "--lines", "0"]), (0, "", ""))
+        self.assertEqual(self.run_cli(["logs", "--lines", "2"]), (0, "second\nlast\n", ""))
+        following = lines(self.paths.log, 1, follow=True)
+        self.assertEqual(next(following), "last\n")
+        following.close()
+
+    def test_legacy_admin_alias_and_background_flag_remain_compatible(self):
+        arguments = cli.parser().parse_args(cli.normalize_legacy_args(["admin", "--foreground"]))
+        self.assertEqual(arguments.command, "run")
+        arguments = cli.parser().parse_args(cli.normalize_legacy_args(["admin"]))
+        self.assertEqual(arguments.command, "start")
+        self.assertTrue(cli.parser().parse_args(["start", "--background"]).background)
 
 
 class InstalledStyleMCPTests(unittest.IsolatedAsyncioTestCase):

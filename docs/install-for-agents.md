@@ -57,11 +57,11 @@ previous host/port setting unless the task calls for changing it.
 
 ## Start and verify
 
-`prouse admin` starts a detached process and returns only after its health check passes.
+`prouse start` starts a detached process and returns only after its health check passes.
 It survives the agent's terminal ending. Running it again returns the existing instance.
 
 ```bash
-prouse admin --json
+prouse start --json
 prouse status --json
 prouse doctor --json
 prouse mcp check --workspace-id WORKSPACE_ID_FROM_SETUP --json
@@ -91,10 +91,10 @@ when stopped. Its fields are deliberately separate:
 usable, while delegated workers/direct Codex execution do not. It exits 0 when the
 installation/configuration is usable (warnings may remain) and 1 for a fatal local
 configuration error. Retry with `prouse logs` and `prouse doctor --json`. Use
-`prouse restart --background` after correcting configuration or updating the package. Stop the
+`prouse restart` after correcting configuration or updating the package. Stop the
 owned instance with `prouse stop`; it never uses a generic process kill.
 
-For an attached terminal instead, `prouse start` (or `prouse admin --foreground`)
+For an attached terminal instead, `prouse run`
 runs in the foreground and Ctrl-C stops it. Do not use that mode for a one-shot agent
 installation that needs to return while keeping Admin running.
 
@@ -143,7 +143,7 @@ connection.
 Report the installed `prouse --version`, executable path, `PROUSE_HOME`, workspace ID,
 dashboard URL(s), setup/status/doctor results, MCP handshake result (or
 `not_tested`), ChatGPT connection state (`not_verified` until user authorization), and
-the `prouse stop` / `prouse restart --background` commands. Include the exact generated
+the `prouse stop` / `prouse restart` commands. Include the exact generated
 MCP config. If `PROUSE_HOME` was customized, prefix follow-up commands with that same
 value so they target the right instance. Keep the handoff short; give a concrete next
 step for any failed check instead of reporting the installation as fully complete.
