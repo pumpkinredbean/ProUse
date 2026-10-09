@@ -13,8 +13,10 @@ from ..state import InstancePaths, atomic_json, file_lock, read_json
 
 
 def fingerprint(pid: int) -> str | None:
+    # -ww: without it, macOS ps cuts the command at the caller's terminal width, so a CLI run
+    # from a terminal and the detached dashboard would see different fingerprints.
     try:
-        result = subprocess.run(["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="],
+        result = subprocess.run(["ps", "-ww", "-p", str(pid), "-o", "lstart=", "-o", "command="],
                                 capture_output=True, text=True, timeout=3, check=False)
         value = " ".join(result.stdout.split())
         return hashlib.sha256(value.encode()).hexdigest() if result.returncode == 0 and value else None

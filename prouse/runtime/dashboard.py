@@ -11,6 +11,7 @@ from importlib import resources
 import json
 from pathlib import Path
 import secrets
+import socketserver
 
 from .. import __version__
 from ..configuration import Configuration
@@ -123,6 +124,12 @@ class Server(ThreadingHTTPServer):
         self.dashboard = dashboard
         self.hosts = set(hosts)
         self.csrf = secrets.token_urlsafe(24)
+
+    def server_bind(self) -> None:
+        # HTTPServer.server_bind looks up the host's FQDN, a reverse DNS query that can stall
+        # startup for seconds on macOS. Nothing here uses server_name.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
 
 class Handler(BaseHTTPRequestHandler):
