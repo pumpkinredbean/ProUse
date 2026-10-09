@@ -3,15 +3,6 @@
 Deferred work that is deliberately not part of the current release. Nothing here carries a date;
 each item states the concrete gap and the decision it needs.
 
-## Localize the Admin UI
-
-The dashboard is Korean-only: `prouse_assets/admin_ui/app.js` carries its labels, buttons and
-notices in Korean, while the CLI, README and `docs/` are English, so a non-Korean user can install
-ProUse but cannot read its dashboard.
-
-Decision needed: translate the strings to English, or add a locale layer so the UI ships both
-languages. Deferred on 2026-09-22.
-
 ## Keep the release tree and the private tree from drifting
 
 The public tree is produced by stripping internal files from the private working tree, so the two
