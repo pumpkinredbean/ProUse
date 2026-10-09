@@ -24,6 +24,10 @@ class Tee:
         self.stream.flush()
         self.log.flush()
 
+    def fileno(self) -> int:
+        # Child processes such as the MCP check inherit the terminal stream.
+        return self.stream.fileno()
+
 
 @contextmanager
 def capture(path: Path):
