@@ -68,6 +68,9 @@ class MCPServerTests(unittest.IsolatedAsyncioTestCase):
     async def call(self, name, args, error=False):
         response = await self.session.call_tool(name, args)
         self.assertEqual(bool(response.isError), error, response)
+        # Text-only clients must receive the same result as structuredContent.
+        self.assertEqual([item.type for item in response.content], ['text'])
+        self.assertEqual(json.loads(response.content[0].text), response.structuredContent)
         return response.structuredContent
 
     @connected
