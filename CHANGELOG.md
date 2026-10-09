@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Return each MCP tool result as JSON text alongside `structuredContent`, so clients
+  that only pass text content to the model (such as Claude Desktop) can read results.
 - Make `prouse start` and `prouse restart` start in the background by default;
   use `prouse run` for foreground execution and service managers.
 - Separate CLI command families, configuration, runtime lifecycle, MCP, and

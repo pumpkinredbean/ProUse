@@ -26,8 +26,10 @@ Sha256 = Annotated[str, Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{
 
 
 def result(value: dict[str, Any]) -> CallToolResult:
+    # Clients that ignore structuredContent (e.g. Claude Desktop) read the same JSON as text.
+    text = json.dumps(value, ensure_ascii=False, separators=(",", ":"), default=str)
     return CallToolResult(structuredContent=value, isError=value.get("status") == "error",
-                          content=[TextContent(type="text", text="Result in structuredContent.")])
+                          content=[TextContent(type="text", text=text)])
 
 
 def invoke(function, *args, **kwargs):
