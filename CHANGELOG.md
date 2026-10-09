@@ -4,6 +4,8 @@
 
 ### Changed
 
+- Translate the dashboard to English. It was Korean-only, while the CLI, README and
+  `docs/` are English.
 - Replace the MCP tools with the coding tool set of the pi agent: `read`, `write`,
   `edit`, `bash`, `grep`, `find` and `ls`, plus `workspaces` (registered folders and
   `AGENTS.md` / `CLAUDE.md` project instructions) and `bash_job`. Results are plain
