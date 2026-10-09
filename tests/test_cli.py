@@ -75,7 +75,34 @@ class CLITests(unittest.TestCase):
                 stdout, stderr = process.communicate()
                 self.fail(f"start exited {process.returncode}: {stdout} {stderr}")
             time.sleep(.05)
-        self.fail("the dashboard did not become ready")
+        self.fail("the dashboard did not become ready\n" + self.diagnose())
+
+    def communicate(self, process, timeout):
+        try:
+            return process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            stdout, stderr = process.communicate()
+            self.fail(f"prouse {' '.join(process.args[3:])} did not finish within {timeout}s\n"
+                      f"stdout: {stdout}\nstderr: {stderr}\n{self.diagnose()}")
+
+    def diagnose(self):
+        """The dashboard receipt, how ps sees that process now, and the end of the dashboard log."""
+        from prouse.runtime.process import fingerprint
+        try:
+            receipt = json.loads(self.paths.instance.read_text())
+        except (OSError, ValueError) as exc:
+            receipt = {"error": str(exc)}
+        lines = [f"receipt: {receipt}"]
+        if isinstance(receipt.get("pid"), int):
+            shown = subprocess.run(["ps", "-ww", "-p", str(receipt["pid"]), "-o", "lstart=", "-o", "command="],
+                                   capture_output=True, text=True).stdout.strip()
+            lines += [f"fingerprint now: {fingerprint(receipt['pid'])}", f"ps: {shown}"]
+        try:
+            lines.append("log:\n" + "".join(self.paths.log.read_text(errors="replace").splitlines(True)[-30:]))
+        except OSError as exc:
+            lines.append(f"log: {exc}")
+        return "\n".join(lines)
 
     @staticmethod
     def free_port():
@@ -157,19 +184,19 @@ class CLITests(unittest.TestCase):
     def test_start_survives_launcher_and_restart_defaults_to_background(self):
         self.setup(self.free_port())
         launcher = self.process("start", "--json")
-        stdout, stderr = launcher.communicate(timeout=10)
+        stdout, stderr = self.communicate(launcher, 10)
         self.assertEqual(launcher.returncode, 0, stderr)
         first = json.loads(stdout)
         self.assertTrue(first["admin_ready"])
         self.assertNotEqual(first["pid"], launcher.pid)
         self.assertTrue(self.runtime.status()["admin_ready"])
         duplicate = self.process("start", "--json")
-        stdout, stderr = duplicate.communicate(timeout=10)
+        stdout, stderr = self.communicate(duplicate, 10)
         self.assertEqual(duplicate.returncode, 0, stderr)
         self.assertEqual(json.loads(stdout)["pid"], first["pid"])
 
         restarted = self.process("restart", "--json")
-        stdout, stderr = restarted.communicate(timeout=10)
+        stdout, stderr = self.communicate(restarted, 10)
         self.assertEqual(restarted.returncode, 0, stderr)
         second = json.loads(stdout)  # Exactly one JSON object, including stop/start.
         self.assertTrue(second["admin_ready"])
@@ -180,7 +207,7 @@ class CLITests(unittest.TestCase):
     def test_dashboard_starts_before_any_workspace_exists(self):
         self.config.save_settings(port=self.free_port())
         launcher = self.process("start", "--json")
-        stdout, stderr = launcher.communicate(timeout=10)
+        stdout, stderr = self.communicate(launcher, 10)
         self.assertEqual(launcher.returncode, 0, stderr)
         self.assertTrue(json.loads(stdout)["admin_ready"])
         self.assertFalse(self.paths.registry.exists())
@@ -327,7 +354,7 @@ class CLITests(unittest.TestCase):
         launchers = [self.process("start", "--json") for _ in range(2)]
         results = []
         for launcher in launchers:
-            stdout, stderr = launcher.communicate(timeout=12)
+            stdout, stderr = self.communicate(launcher, 12)
             self.assertEqual(launcher.returncode, 0, stdout + stderr)
             results.append(json.loads(stdout))
         self.assertEqual(results[0]["pid"], results[1]["pid"])
@@ -336,7 +363,7 @@ class CLITests(unittest.TestCase):
     def test_invalid_restart_preserves_running_instance_and_stop_ignores_bad_settings(self):
         self.setup(self.free_port())
         launcher = self.process("start", "--json")
-        stdout, stderr = launcher.communicate(timeout=10)
+        stdout, stderr = self.communicate(launcher, 10)
         self.assertEqual(launcher.returncode, 0, stderr)
         pid = json.loads(stdout)["pid"]
         code, output, _ = self.run_cli(["restart", "--port", "0", "--json"])
