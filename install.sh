@@ -68,4 +68,4 @@ if [ "$(command -v prouse || true)" != "$prouse_command" ]; then
   printf '%s\n' "Or run the installed executable above by its full path."
 fi
 printf '\n%s\n' "Next, from your project directory:"
-printf '%s\n' "  prouse setup --workspace ." "  prouse start"
+printf '%s\n' "  prouse setup --workspace ." "  prouse mcp config    # add this to your MCP client, then restart it"

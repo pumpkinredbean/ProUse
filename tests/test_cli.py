@@ -1,4 +1,3 @@
-import asyncio
 import contextlib
 import io
 import json
@@ -15,16 +14,14 @@ from unittest import mock
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
+from support import ROOT
+
 from prouse import cli
 from prouse.configuration import Configuration
 from prouse.errors import ExitCode
 from prouse.integrations import mcp, services
 from prouse.runtime.admin import AdminRuntime
 from prouse.state import InstancePaths, atomic_json
-
-
-ROOT = Path(__file__).resolve().parents[1]
-PYTHONPATH = os.pathsep.join((str(ROOT), str(ROOT / "scripts")))
 
 
 class CLITests(unittest.TestCase):
@@ -64,7 +61,7 @@ class CLITests(unittest.TestCase):
         return json.loads(output)
 
     def process(self, *args):
-        env = dict(os.environ, PYTHONPATH=PYTHONPATH, PROUSE_HOME=str(self.home))
+        env = dict(os.environ, PYTHONPATH=str(ROOT), PROUSE_HOME=str(self.home))
         return subprocess.Popen([sys.executable, "-m", "prouse.cli", *args], cwd=self.base,
                                 env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -78,7 +75,7 @@ class CLITests(unittest.TestCase):
                 stdout, stderr = process.communicate()
                 self.fail(f"start exited {process.returncode}: {stdout} {stderr}")
             time.sleep(.05)
-        self.fail("Admin did not become ready")
+        self.fail("the dashboard did not become ready")
 
     @staticmethod
     def free_port():
@@ -88,6 +85,7 @@ class CLITests(unittest.TestCase):
 
     def test_setup_twice_preserves_existing_configuration(self):
         first = self.setup()
+        self.assertTrue(first["workspace_added"])
         registry_path = Path(first["registry"])
         registry = json.loads(registry_path.read_text())
         registry["workspaces"][0]["label"] = "User preserved label"
@@ -99,9 +97,9 @@ class CLITests(unittest.TestCase):
         second = self.setup()
         self.assertFalse(second["workspace_added"])
         after = json.loads(registry_path.read_text())
+        self.assertEqual(after["version"], 2)
         self.assertEqual(after["workspaces"][0]["label"], "User preserved label")
         self.assertEqual(self.config.settings_document()["user_setting"], "keep")
-        self.assertIn(".state", Path(after["state_dir"]).parts)
 
     def test_noninteractive_missing_input_and_json_exit_codes(self):
         code, output, _ = self.run_cli(["setup", "--no-input", "--json"])
@@ -113,11 +111,48 @@ class CLITests(unittest.TestCase):
 
     def test_setup_bad_path_or_port_does_not_create_configuration(self):
         for extra in (["--workspace", str(self.base / "missing")],
-                      ["--workspace", str(self.workspace), "--port", "0"]):
+                      ["--workspace", str(self.workspace), "--port", "0"],
+                      ["--workspace", str(Path.home())]):
             code, output, _ = self.run_cli(["setup", "--no-input", "--json", *extra])
             self.assertEqual(code, ExitCode.USAGE, output)
             self.assertEqual(json.loads(output)["status"], "error")
             self.assertFalse(self.paths.registry.exists())
+
+    def test_workspace_commands(self):
+        other = self.base / "Other App"
+        other.mkdir()
+        self.setup()
+        code, output, _ = self.run_cli(["workspace", "add", str(other), "--json"])
+        self.assertEqual(code, 0, output)
+        added = json.loads(output)
+        self.assertEqual((added["workspace_id"], added["default"]), ("other-app", False))
+        self.assertEqual(self.run_cli(["workspace", "default", "other-app"])[0], 0)
+        self.config.update("project-with-spaces", enabled=False)
+        code, output, _ = self.run_cli(["workspace", "list"])
+        self.assertEqual(output.splitlines(), [f"project-with-spaces (disabled): {self.workspace}",
+                                               f"other-app (default): {other}"])
+        code, output, _ = self.run_cli(["workspace", "remove", "other-app"])
+        self.assertIn("its files were not touched", output)
+        self.assertTrue(other.is_dir())
+        code, output, _ = self.run_cli(["workspace", "remove", "other-app", "--json"])
+        self.assertEqual(code, ExitCode.USAGE)
+        self.assertIn("Unknown workspace", json.loads(output)["error"])
+
+    def test_version_1_registry_is_rewritten_as_version_2_on_change(self):
+        atomic_json(self.paths.registry, {
+            "version": 1, "server_name": "ProUse", "default_worker_profile": "standard",
+            "worker_profiles": [{"id": "standard", "model": "gpt-5-codex"}],
+            "default_workspace_id": "legacy",
+            "workspaces": [{"id": "legacy", "label": "Legacy", "root": str(self.workspace), "enabled": True,
+                            "default_worker_profile": "standard", "context_policy": "policies/legacy.json"}]})
+        self.assertEqual(self.config.listing()["default"], "legacy")
+        other = self.base / "other"
+        other.mkdir()
+        self.assertEqual(self.run_cli(["workspace", "add", str(other)])[0], 0)
+        document = json.loads(self.paths.registry.read_text())
+        self.assertEqual(document, {"version": 2, "default_workspace_id": "legacy", "workspaces": [
+            {"id": "legacy", "label": "Legacy", "root": str(self.workspace), "enabled": True},
+            {"id": "other", "label": "other", "root": str(other), "enabled": True}]})
 
     def test_start_survives_launcher_and_restart_defaults_to_background(self):
         self.setup(self.free_port())
@@ -142,6 +177,14 @@ class CLITests(unittest.TestCase):
         self.assertEqual(self.run_cli(["stop"])[0], 0)
         self.assertEqual(self.run_cli(["status", "--json"])[0], ExitCode.NOT_RUNNING)
 
+    def test_dashboard_starts_before_any_workspace_exists(self):
+        self.config.save_settings(port=self.free_port())
+        launcher = self.process("start", "--json")
+        stdout, stderr = launcher.communicate(timeout=10)
+        self.assertEqual(launcher.returncode, 0, stderr)
+        self.assertTrue(json.loads(stdout)["admin_ready"])
+        self.assertFalse(self.paths.registry.exists())
+
     def test_background_port_conflict_is_reported_to_launcher(self):
         port = self.free_port()
         self.setup(port)
@@ -152,28 +195,27 @@ class CLITests(unittest.TestCase):
             stdout, stderr = launcher.communicate(timeout=10)
         self.assertEqual(launcher.returncode, ExitCode.ERROR, stderr)
         self.assertEqual(json.loads(stdout)["status"], "error")
-        self.assertIn("Cannot start Admin", self.paths.log.read_text())
+        self.assertIn("Cannot start the dashboard", self.paths.log.read_text())
         self.assertFalse(self.runtime.status()["running"])
 
     def test_mcp_config_and_real_check_use_the_selected_instance(self):
-        setup = self.setup()
+        self.setup()
         code, output, _ = self.run_cli(["mcp", "config"])
         self.assertEqual(code, 0)
-        self.assertEqual(json.loads(output)["mcpServers"]["prouse"]["env"],
-                         {"PROUSE_HOME": str(self.home)})
-        checker = self.process("mcp", "check", "--workspace-id", setup["workspace_id"], "--json")
-        stdout, stderr = checker.communicate(timeout=15)
+        self.assertEqual(json.loads(output)["mcpServers"]["prouse"]["env"], {"PROUSE_HOME": str(self.home)})
+        checker = self.process("mcp", "check", "--json")
+        stdout, stderr = checker.communicate(timeout=30)
         self.assertEqual(checker.returncode, 0, stderr + stdout)
         result = json.loads(stdout)
         self.assertEqual(result["handshake"], "verified")
         self.assertEqual(result["workspace_read"], "verified")
-        self.assertEqual(result["workspace_id"], setup["workspace_id"])
+        self.assertEqual(result["tools"], 9)
         self.assertEqual(result["client_connection"], "not_verified")
-        checker = self.process("mcp", "check", "--workspace-id", "missing", "--json")
-        stdout, stderr = checker.communicate(timeout=15)
-        self.assertEqual(checker.returncode, ExitCode.ERROR, stderr + stdout)
-        self.assertEqual(json.loads(stdout)["status"], "error")
-        self.assertIn("no selected workspace", json.loads(stdout)["error"])
+
+    def test_mcp_check_without_workspaces_says_what_to_do(self):
+        code, output, _ = self.run_cli(["mcp", "check", "--json"])
+        self.assertEqual(code, ExitCode.USAGE)
+        self.assertIn("prouse setup --workspace", json.loads(output)["error"])
 
     def test_mcp_config_does_not_choose_another_installation_from_path(self):
         other = self.base / "other installation"
@@ -190,10 +232,13 @@ class CLITests(unittest.TestCase):
         status = self.wait_ready(started)
         self.assertEqual(status["pid"], started.pid)
         self.assertEqual(status["local_installation"]["status"], "ready")
-        self.assertEqual(self.run_cli(["doctor", "--json"])[0], 0)
+        code, output, _ = self.run_cli(["doctor", "--json"])
+        self.assertEqual(code, 0, output)
+        self.assertIn({"name": "dashboard", "status": "ok", "detail": status["admin_urls"][0]},
+                      json.loads(output)["checks"])
         self.assertTrue(self.paths.log.is_file())
         duplicate = subprocess.run([sys.executable, "-m", "prouse.cli", "start", "--json"],
-            cwd=self.base, env=dict(os.environ, PYTHONPATH=PYTHONPATH, PROUSE_HOME=str(self.home)),
+            cwd=self.base, env=dict(os.environ, PYTHONPATH=str(ROOT), PROUSE_HOME=str(self.home)),
             capture_output=True, text=True, timeout=5)
         self.assertEqual(duplicate.returncode, 0, duplicate.stderr)
         self.assertEqual(json.loads(duplicate.stdout)["status"], "already_running")
@@ -219,7 +264,7 @@ class CLITests(unittest.TestCase):
             process = self.process("run")
             stdout, stderr = process.communicate(timeout=5)
         self.assertEqual(process.returncode, ExitCode.ERROR, stdout + stderr)
-        self.assertIn("Cannot start Admin", stderr)
+        self.assertIn("Cannot start the dashboard", stderr)
         self.assertFalse(self.paths.instance.exists())
 
         atomic_json(self.paths.instance, {
@@ -244,30 +289,27 @@ class CLITests(unittest.TestCase):
                 self.assertEqual(code, 0, error)
                 self.assertIn(json.loads(output)["status"], {"not_run"})
 
-    def test_packaged_admin_assets_resolve_outside_checkout(self):
+    def test_packaged_dashboard_assets_resolve_outside_checkout(self):
         from importlib import resources
         old = Path.cwd()
         os.chdir(self.base)
         try:
             page = resources.files("prouse_assets").joinpath("admin_ui", "index.html").read_text()
-            schema = json.loads(resources.files("prouse").joinpath(
-                "examples", "workspace-registry.schema.json").read_text())
         finally:
             os.chdir(old)
         self.assertIn("ProUse", page)
-        self.assertFalse(schema["additionalProperties"])
 
     def test_agent_documentation_contains_supported_commands(self):
         text = (ROOT / "docs/install-for-agents.md").read_text()
-        for command in ("prouse setup", "prouse start", "prouse status --json", "prouse doctor --json",
-                        "prouse stop", "prouse restart", '"mcp", "serve"'):
+        for command in ("prouse setup", "prouse mcp config", "prouse mcp check --json", "prouse doctor --json",
+                        "prouse start", '"mcp", "serve"'):
             self.assertIn(command, text)
         self.assertIn("not_verified", text)
 
     def test_json_argument_errors_and_global_flag(self):
         for arguments in (["start", "--port", "bad"], ["start", "--start-timeout", "nan"],
                           ["restart", "--timeout", "-1"], ["logs", "--lines", "-1"],
-                          ["mcp", "check", "--timeout", "inf"], ["service"], ["unknown"]):
+                          ["mcp", "check", "--timeout", "inf"], ["service"], ["workspace"], ["unknown"]):
             with self.subTest(arguments=arguments):
                 code, output, errors = self.run_cli(["--json", *arguments])
                 self.assertEqual(code, ExitCode.USAGE, output)
@@ -335,7 +377,7 @@ class CLITests(unittest.TestCase):
         registry["workspaces"][0]["root"] = os.path.relpath(self.workspace, self.paths.config)
         atomic_json(self.paths.registry, registry)
         self.assertFalse(self.setup()["workspace_added"])
-        self.assertEqual(len(self.config.registry().workspaces), 1)
+        self.assertEqual(len(self.config.listing()["workspaces"]), 1)
 
     def test_setup_bad_settings_is_reported_without_overwriting_registry(self):
         self.setup()
@@ -371,25 +413,26 @@ class InstalledStyleMCPTests(unittest.IsolatedAsyncioTestCase):
             project = base / "temporary project"
             project.mkdir()
             (project / "README.md").write_text("temporary MCP bytes\n")
-            env = dict(os.environ, PROUSE_HOME=str(base / "home"), PYTHONPATH=PYTHONPATH)
+            env = dict(os.environ, PROUSE_HOME=str(base / "home"), PYTHONPATH=str(ROOT), PROUSE_SHELL_SNAPSHOT="0")
             installed = os.environ.get("PROUSE_INSTALLED_COMMAND")
             prefix = [installed] if installed else [sys.executable, "-m", "prouse.cli"]
-            setup = subprocess.run([*prefix, "setup", "--workspace", str(project),
-                                    "--no-input", "--host", "127.0.0.1"], cwd=base, env=env,
-                                   capture_output=True, text=True, timeout=10)
+            setup = subprocess.run([*prefix, "setup", "--workspace", str(project), "--no-input"], cwd=base,
+                                   env=env, capture_output=True, text=True, timeout=10)
             self.assertEqual(setup.returncode, 0, setup.stderr)
-            params = StdioServerParameters(command=prefix[0],
-                args=[*prefix[1:], "mcp", "serve"], cwd=str(base), env=env)
+            params = StdioServerParameters(command=prefix[0], args=[*prefix[1:], "mcp", "serve"],
+                                           cwd=str(base), env=env)
             async with stdio_client(params) as (reader, writer):
                 async with ClientSession(reader, writer) as session:
                     initialized = await session.initialize()
                     self.assertEqual(initialized.serverInfo.name, "ProUse")
+                    self.assertIn("workspaces", initialized.instructions)
                     tools = await session.list_tools()
-                    self.assertIn("read_files", {tool.name for tool in tools.tools})
-                    response = await session.call_tool("read_files", {
-                        "requests": [{"path": "README.md", "start_line": 1, "end_line": 1}]})
+                    self.assertEqual(len(tools.tools), 9)
+                    response = await session.call_tool("read", {"path": "README.md"})
                     self.assertFalse(response.isError, response)
-                    self.assertIn("temporary MCP bytes", response.structuredContent["files"][0]["text"])
+                    self.assertEqual(response.content[0].text, "temporary MCP bytes\n")
+                    response = await session.call_tool("bash", {"command": "echo $PROUSE_HOME"})
+                    self.assertEqual(response.content[0].text, str(base / "home"))
 
 
 if __name__ == "__main__":

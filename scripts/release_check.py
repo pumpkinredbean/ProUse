@@ -16,31 +16,25 @@ REQUIRED = [
     "pyproject.toml",
     "install.sh",
     ".github/workflows/ci.yml",
-    "SKILL.md",
-    "agents/openai.yaml",
-    "scripts/context_server.py",
-    "scripts/context_store.py",
-    "scripts/admin_server.py",
-    "scripts/advisor_wait.py",
     "CHANGELOG.md",
     "ROADMAP.md",
+    "docs/cli-design.md",
     "docs/configuration.md",
     "docs/mcp-tools.md",
-    "docs/direct-execution.md",
     "docs/security-model.md",
     "docs/install-for-agents.md",
     "examples/workspace-registry.example.json",
-    "examples/workspace-registry.schema.json",
-    "examples/context-policy.example.json",
-    "scripts/check_worker_sandbox.py",
-    "scripts/test_advisor_wait.py",
-    "scripts/test_cli.py",
     "prouse/cli.py",
+    "prouse/server.py",
+    "prouse/workspaces.py",
+    "prouse/configuration.py",
     "prouse_assets/admin_ui/index.html",
+    "prouse_assets/admin_ui/app.js",
+    "tests/test_server.py",
+    "tests/test_cli.py",
 ]
 
-# Live runtime state and credentials never belong in the public tree. The advisor skill
-# (SKILL.md and agents/) is part of the product and is required above.
+# Live runtime state and credentials never belong in the public tree.
 FORBIDDEN_PUBLIC_PATHS = [
     "PUBLISHING.md",
     ".state",
@@ -77,30 +71,22 @@ def main() -> None:
     if tagline not in readme:
         fail("README is missing the canonical tagline")
 
-    skill = (ROOT / "SKILL.md").read_text()
-    if "name: pro-advisor" not in skill:
-        fail("compatibility skill ID pro-advisor was changed unexpectedly")
-
-    admin = (ROOT / "scripts/admin_server.py").read_text()
-    if "default='127.0.0.1'" not in admin and 'default="127.0.0.1"' not in admin:
-        fail("Admin server is not localhost-only by default")
+    configuration = (ROOT / "prouse/configuration.py").read_text()
+    if 'host: str = "127.0.0.1"' not in configuration:
+        fail("the dashboard is not localhost-only by default")
 
     packaging = (ROOT / "pyproject.toml").read_text()
     if 'prouse = "prouse.cli:main"' not in packaging:
         fail("installed prouse console entry point is missing")
 
     agent_install = (ROOT / "docs/install-for-agents.md").read_text()
-    for command in ("prouse setup", "prouse start", "prouse status --json", "prouse mcp serve"):
+    for command in ("prouse setup", "prouse mcp config", "prouse mcp check", '"mcp", "serve"'):
         if command not in agent_install:
             fail("agent installation document is missing " + command)
 
     registry = json.loads((ROOT / "examples/workspace-registry.example.json").read_text())
-    if registry.get("server_name") != "ProUse":
-        fail("registry example server_name is not ProUse")
-
-    policy = json.loads((ROOT / "examples/context-policy.example.json").read_text())
-    if policy.get("name") != "example-context":
-        fail("context policy example is not generic")
+    if registry.get("version") != 2:
+        fail("registry example is not version 2")
 
     hits = []
     for path in ROOT.rglob("*"):
@@ -125,8 +111,7 @@ def main() -> None:
     print("ProUse release check: OK")
     print("Canonical tagline: " + tagline)
     print("Public tree privacy scan: clean")
-    print("Admin default bind: 127.0.0.1")
-    print("Compatibility skill ID: pro-advisor")
+    print("Dashboard default bind: 127.0.0.1")
 
 
 if __name__ == "__main__":

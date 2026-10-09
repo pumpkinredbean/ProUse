@@ -106,7 +106,7 @@ def manage(paths: InstancePaths, action: str, *, manager: str | None = None,
                 "stdout": completed.stdout.strip(), "stderr": completed.stderr.strip()}, code
     if action == "install":
         if not dry_run:
-            Configuration(paths).registry()
+            Configuration(paths).check()
             paths.prepare_runtime()
             spec.path.parent.mkdir(parents=True, exist_ok=True)
             spec.path.write_bytes(spec.content)

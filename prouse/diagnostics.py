@@ -1,31 +1,46 @@
-"""Read-only checks; warnings do not pretend to verify a remote MCP client."""
+"""Read-only checks. Warnings never claim an MCP client is connected."""
+from __future__ import annotations
+
 from . import __version__
-from .configuration import Configuration, codex_path
+from .configuration import Configuration
 from .errors import CLIError
 from .runtime.admin import AdminRuntime
+from .tools.search import ripgrep
+from .tools.shell import _bash
 
 
 def inspect(config: Configuration, runtime: AdminRuntime) -> dict:
-    checks = [{"name": "local_installation", "status": "ok", "detail": f"ProUse {__version__}"}]
+    checks = [{"name": "installation", "status": "ok", "detail": f"ProUse {__version__}"}]
     try:
-        registry = config.registry()
-        config.settings()
-        checks.append({"name": "configuration", "status": "ok", "workspaces": len(registry.workspaces)})
+        listing = config.listing()
+        ready = [item for item in listing["workspaces"] if item["status"] == "ready"]
+        if ready:
+            checks.append({"name": "workspaces", "status": "ok",
+                           "detail": f"{len(ready)} ready, default {listing['default'] or 'none'}"})
+        else:
+            checks.append({"name": "workspaces", "status": "error",
+                           "detail": "none ready; run `prouse setup --workspace /path/to/project`"})
+        for item in listing["workspaces"]:
+            if item["status"] == "unavailable":
+                checks.append({"name": "workspaces", "status": "warning",
+                               "detail": f"{item['id']} is unavailable ({item['reason']}): {item['root']}"})
     except (CLIError, OSError, ValueError) as exc:
-        checks.append({"name": "configuration", "status": "error", "detail": str(exc)})
-    executable = codex_path()
-    checks.append({"name": "codex", "status": "ok" if executable else "warning",
-                   "detail": executable or "Not found; context and Admin remain available, worker execution does not"})
+        checks.append({"name": "workspaces", "status": "error", "detail": str(exc)})
+    try:
+        config.settings()
+    except (CLIError, OSError, ValueError) as exc:
+        checks.append({"name": "settings", "status": "error", "detail": str(exc)})
+    rg = ripgrep()
+    checks.append({"name": "ripgrep", "status": "ok" if rg else "warning",
+                   "detail": rg or "not found; grep and find use a slower built-in search"})
+    checks.append({"name": "bash", "status": "ok", "detail": _bash()})
     try:
         status = runtime.status()
-        checks.append({"name": "admin_service", "status": "ok" if status["admin_ready"] else "warning",
-                       "detail": status["status"]})
+        checks.append({"name": "dashboard", "status": "ok" if status["admin_ready"] else "info",
+                       "detail": status["admin_urls"][0] if status["admin_ready"]
+                       else "not running (optional); start it with `prouse start`"})
     except (CLIError, OSError, ValueError) as exc:
-        checks.append({"name": "admin_service", "status": "error", "detail": str(exc)})
-    checks.extend([
-        {"name": "mcp_handshake", "status": "not_tested", "detail": "Run prouse mcp check"},
-        {"name": "client_connection", "status": "not_verified",
-         "detail": "Client authorization must be confirmed in that client"},
-    ])
+        checks.append({"name": "dashboard", "status": "error", "detail": str(exc)})
+    checks.append({"name": "mcp_handshake", "status": "info", "detail": "run `prouse mcp check` to test it"})
     return {"status": "error" if any(item["status"] == "error" for item in checks) else "ok",
             "checks": checks, "home": str(config.paths.home)}

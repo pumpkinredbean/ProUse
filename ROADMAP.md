@@ -5,10 +5,9 @@ each item states the concrete gap and the decision it needs.
 
 ## Localize the Admin UI
 
-The operator interface is Korean-only: `scripts/admin_ui/app.js` carries roughly 2,700 Korean
-characters of labels, buttons and notices, and `scripts/admin_server.py` returns Korean error
-messages. The skill, README and `docs/` are English, so a non-Korean operator can install ProUse
-but cannot read its Admin UI.
+The dashboard is Korean-only: `prouse_assets/admin_ui/app.js` carries its labels, buttons and
+notices in Korean, while the CLI, README and `docs/` are English, so a non-Korean user can install
+ProUse but cannot read its dashboard.
 
 Decision needed: translate the strings to English, or add a locale layer so the UI ships both
 languages. Deferred on 2026-09-22.

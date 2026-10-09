@@ -1,33 +1,35 @@
 # Security
 
-ProUse provides scoped file access **and privileged local command execution**. Treat access
-to a running ProUse instance similarly to access to a developer account on the host.
+ProUse gives the model in a chat app file access to your registered project folders
+**and an unsandboxed `bash` tool that runs commands as you**. Treat access to a ProUse
+MCP server like access to your terminal.
 
 ## Supported release
 
 Security fixes are applied to the latest release line. Until the first stable release,
 users should run the newest tagged version or an explicitly reviewed commit.
 
-## Safe defaults
+## Defaults
 
-- The Admin UI binds to `127.0.0.1` by default.
-- Workspaces must be explicitly registered.
-- Context reads and writes are bounded by a per-workspace policy.
-- The context layer rejects traversal, unsafe links/file types, private runtime state, and
-  secret-like paths/content.
-- Existing-file writes can be bound to an observed SHA-256 with `expected_sha256`.
-- Direct execution and delegated workers are separate, explicit paths.
-- Runtime state belongs below `.state/` and is ignored by Git.
+- The MCP server speaks stdio only and opens no network port.
+- The file tools only reach registered workspaces, after resolving symlinks. Your home
+  folder and the filesystem root cannot be registered.
+- Every tool carries MCP annotations so the client can ask for approval before
+  destructive or open-world calls.
+- The optional dashboard binds to `127.0.0.1`, checks the `Host` header, and accepts
+  changes only from its own page with a per-process token.
 
-## Operator responsibilities
+## Your responsibilities
 
-- Do not register your home directory or filesystem root as a workspace.
-- Do not expose the Admin UI directly to the public Internet.
-- Protect any remote MCP transport with authentication and network controls you trust.
-- Review direct commands before allowing high-impact external side effects.
-- Keep credentials, live policies, receipts, and private project artifacts out of source control.
+- Register project folders only, and only ones whose contents you are willing to send to
+  your chat app's model provider.
+- Review `bash` commands before approving them, especially in repositories you do not
+  trust: file contents and command output can carry prompt injections.
+- Do not bridge the MCP server to a network transport or tunnel, and do not expose the
+  dashboard beyond a network you trust.
+- Keep `PROUSE_HOME`, credentials and command output out of source control.
 
-See [docs/security-model.md](docs/security-model.md) for the detailed boundary model.
+See the [security model](docs/security-model.md) for the details.
 
 ## Reporting a vulnerability
 

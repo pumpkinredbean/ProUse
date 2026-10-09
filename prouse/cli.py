@@ -9,8 +9,8 @@ from .state import InstancePaths
 
 
 def parser() -> ArgumentParser:
-    root = ArgumentParser(prog="prouse", description="ProUse local workspace and MCP control",
-        epilog="Get started: prouse setup --workspace .   Then: prouse start")
+    root = ArgumentParser(prog="prouse", description="Coding tools for AI chat apps, scoped to your project folders",
+        epilog="Get started: prouse setup --workspace .   Then: prouse mcp config")
     root.add_argument("--version", action="version", version=f"ProUse {__version__}")
     json_flag(root)
     root.set_defaults(json=False)

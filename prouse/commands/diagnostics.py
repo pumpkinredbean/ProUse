@@ -9,7 +9,7 @@ def register(commands) -> None:
     doctor = commands.add_parser("doctor", help="diagnose installation and capabilities")
     json_flag(doctor)
     doctor.set_defaults(handler=inspect)
-    logs = commands.add_parser("logs", help="show recent logs; optionally follow new output")
+    logs = commands.add_parser("logs", help="show recent dashboard logs; optionally follow new output")
     logs.add_argument("-f", "--follow", action="store_true")
     logs.add_argument("-n", "--lines", type=line_count, default=100)
     logs.set_defaults(handler=show_logs)
@@ -21,8 +21,7 @@ def inspect(context: CommandContext, args) -> int:
         context.output.result(result)
     else:
         for item in result["checks"]:
-            detail = item.get("detail", f"{item.get('workspaces', 0)} workspaces")
-            context.output.line(f"{item['status']:12} {item['name']}: {detail}")
+            context.output.line(f"{item['status']:8} {item['name']}: {item['detail']}")
     return ExitCode.ERROR if result["status"] == "error" else ExitCode.OK
 
 
