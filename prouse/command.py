@@ -43,8 +43,8 @@ def json_flag(parser: argparse.ArgumentParser) -> None:
 
 
 def listener_flags(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--host", help="override the configured listen address")
-    parser.add_argument("--port", type=int, help="override the configured listen port")
+    parser.add_argument("--host", help="override the configured dashboard listen address")
+    parser.add_argument("--port", type=int, help="override the configured dashboard listen port")
 
 
 class Output:
@@ -68,7 +68,7 @@ class Output:
         if self.json_mode:
             self.result(value)
             return
-        self.line("ProUse: " + value["status"].replace("_", " "))
+        self.line("ProUse dashboard: " + value["status"].replace("_", " "))
         if value.get("running") or value.get("mode") == "foreground":
             for url in value.get("admin_urls", []):
                 self.line(f"Dashboard: {url}")

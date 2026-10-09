@@ -4,7 +4,7 @@ from ..integrations.services import manage
 
 
 def register(commands) -> None:
-    parser = commands.add_parser("service", help="manage optional login autostart")
+    parser = commands.add_parser("service", help="start the dashboard at login (optional)")
     json_flag(parser)
     subcommands = parser.add_subparsers(dest="service_action", required=True)
     for name, description in (("install", "enable a user login service"),

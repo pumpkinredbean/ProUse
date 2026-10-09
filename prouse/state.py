@@ -35,12 +35,9 @@ class InstancePaths:
         return self.config / "settings.json"
 
     @property
-    def policies(self) -> Path:
-        return self.config / "policies"
-
-    @property
-    def state(self) -> Path:
-        return self.home / ".state" / "orchestrator"
+    def output(self) -> Path:
+        """Full output of long bash commands, readable through the read tool."""
+        return self.home / "output"
 
     @property
     def run(self) -> Path:
@@ -73,7 +70,7 @@ def atomic_json(path: Path, value: Any) -> None:
     descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(value, handle, indent=2, ensure_ascii=False, sort_keys=True)
+            json.dump(value, handle, indent=2, ensure_ascii=False)
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())

@@ -1,6 +1,0 @@
-interface:
-  display_name: "ProUse"
-  short_description: "Use Pro models across your local workspaces."
-  default_prompt: "Use $pro-advisor to review the current issue with the existing Pro conversation and fold the verified results into the task state."
-policy:
-  allow_implicit_invocation: true

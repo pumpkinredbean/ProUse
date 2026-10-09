@@ -1,19 +1,25 @@
-"""Validated operator configuration. No CLI parsing, prompting, or printing."""
+"""The workspace registry: which project folders ProUse may work in.
+
+The registry lives at `$PROUSE_HOME/config/workspace-registry.json`. Version 2 holds only
+workspaces; a version 1 registry from earlier releases is read as is and rewritten as
+version 2 (dropping worker profiles and context policies) the next time it changes.
+"""
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 import re
-import shutil
 
 from .errors import CLIError, ExitCode
 from .state import InstancePaths, atomic_json, file_lock, read_json
+from .workspaces import Workspaces, parse_registry
 
-ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,47}$")
+ID_RE = re.compile(r"^[a-z][a-z0-9_-]{0,63}$")
 
 
 @dataclass(frozen=True)
 class AdminSettings:
+    """Where the optional workspace dashboard listens."""
     host: str = "127.0.0.1"
     port: int = 8848
 
@@ -32,17 +38,14 @@ class AdminSettings:
         return cls(host=value.get("host", "127.0.0.1"), port=value.get("port", 8848))
 
 
-def codex_path() -> str | None:
-    return shutil.which("codex")
-
-
 def validate_workspace(value: str) -> Path:
     try:
         path = Path(value).expanduser().resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         raise CLIError(f"Workspace is not accessible: {value}: {exc}", ExitCode.USAGE) from None
     if not path.is_dir() or path in (Path(path.anchor), Path.home().resolve()):
-        raise CLIError("Workspace must be an existing explicit project directory", ExitCode.USAGE)
+        raise CLIError("Workspace must be an existing project directory, not your home folder or the "
+                       "filesystem root", ExitCode.USAGE)
     return path
 
 
@@ -57,6 +60,31 @@ class Configuration:
     def __init__(self, paths: InstancePaths):
         self.paths = paths
 
+    def _document(self) -> dict | None:
+        document = read_json(self.paths.registry)
+        if document is None:
+            return None
+        try:
+            parse_registry(document, self.paths.config)
+        except ValueError as exc:
+            raise CLIError(f"Invalid workspace registry {self.paths.registry}: {exc}") from None
+        return document
+
+    def _entries(self, document: dict | None) -> list[dict]:
+        if document is None:
+            return []
+        return [{"id": item["id"], "label": item.get("label", item["id"]), "root": item["root"],
+                 "enabled": item.get("enabled", True)} for item in document.get("workspaces", [])]
+
+    def _save(self, entries: list[dict], default: str | None) -> None:
+        ids = [item["id"] for item in entries if item["enabled"]]
+        if default not in ids:
+            default = ids[0] if ids else None
+        document: dict = {"version": 2, "default_workspace_id": default, "workspaces": entries}
+        if not default:
+            del document["default_workspace_id"]
+        atomic_json(self.paths.registry, document)
+
     def settings_document(self) -> dict:
         document = read_json(self.paths.settings, {})
         if not isinstance(document, dict):
@@ -66,76 +94,112 @@ class Configuration:
     def settings(self) -> AdminSettings:
         return AdminSettings.from_dict(self.settings_document())
 
-    def registry(self):
-        from workspace_registry import Registry
+    def save_settings(self, *, host: str | None = None, port: int | None = None) -> AdminSettings:
+        with file_lock(self.paths.config / "setup.lock"):
+            document = self.settings_document()
+            settings = AdminSettings.from_dict(document).override(host, port)
+            atomic_json(self.paths.settings, {**document, **asdict(settings)})
+        return settings
+
+    def check(self) -> None:
+        """Fail early on a broken registry or settings file; a missing registry is fine."""
+        self._document()
+        self.settings()
+
+    def workspaces(self) -> Workspaces:
         if not self.paths.registry.is_file():
-            raise CLIError("ProUse is not configured. Run `prouse setup --workspace .`.", ExitCode.USAGE)
-        return Registry.load(self.paths.registry)
+            raise CLIError("No workspace is registered yet. Run `prouse setup --workspace /path/to/project`.",
+                           ExitCode.USAGE)
+        self._document()
+        return Workspaces(self.paths.registry)
 
-    def default_registry(self) -> dict:
-        result = {
-            "version": 1, "server_name": "ProUse", "state_dir": str(self.paths.state),
-            "default_worker_profile": "standard", "model_capabilities": {"gpt-5-codex": ["high"]},
-            "worker_profiles": [{"id": "standard", "label": "Standard", "model": "gpt-5-codex",
-                                 "reasoning_effort": "high", "access": "full_access"}],
-            "workspaces": [],
-        }
-        if executable := codex_path():
-            result["codex_bin"] = executable
-        return result
+    def listing(self) -> dict:
+        """Every registered workspace, with whether the tools can use it right now."""
+        document = self._document()
+        available, unavailable = parse_registry(document, self.paths.config) if document else ([], [])
+        ready = {item.id: item for item in available}
+        reasons = {item.id: item.reason for item in unavailable}
+        default = next((item.id for item in available if item.default), None)
+        workspaces = []
+        for entry in self._entries(document):
+            item = {**entry, "default": entry["id"] == default}
+            if entry["id"] in ready:
+                item.update(status="ready", root=str(ready[entry["id"]].root))
+            elif entry["id"] in reasons:
+                item.update(status="unavailable", reason=reasons[entry["id"]])
+            else:
+                item["status"] = "disabled"
+            workspaces.append(item)
+        return {"workspaces": workspaces, "default": default, "registry": str(self.paths.registry)}
 
-    def setup(self, workspace: str, *, workspace_id: str | None = None, label: str | None = None,
-              host: str | None = None, port: int | None = None) -> dict:
-        from context_store import ALLOWED_EXTENSIONS
-        from workspace_registry import Registry
+    def add(self, workspace: str, *, workspace_id: str | None = None, label: str | None = None,
+            make_default: bool = False) -> dict:
         project = validate_workspace(workspace)
         wanted = workspace_id or workspace_slug(project)
         if not ID_RE.fullmatch(wanted):
-            raise CLIError("--workspace-id must match [a-z][a-z0-9-]{0,47}", ExitCode.USAGE)
+            raise CLIError("Workspace IDs must match [a-z][a-z0-9_-]{0,63}", ExitCode.USAGE)
         if label is not None and not 1 <= len(label) <= 120:
-            raise CLIError("--label must contain 1 to 120 characters", ExitCode.USAGE)
-        with file_lock(self.paths.config / "setup.lock"):
-            document = self.settings_document()
-            if host is not None:
-                document["host"] = host
-            if port is not None:
-                document["port"] = port
-            settings = AdminSettings.from_dict(document)
-            created = not self.paths.registry.exists()
-            registry = self.default_registry() if created else self.registry().config
-            existing = next((item for item in registry["workspaces"]
-                             if (self.paths.config / item["root"]).resolve() == project), None)
+            raise CLIError("Labels must contain 1 to 120 characters", ExitCode.USAGE)
+        with file_lock(self.paths.config / "registry.lock"):
+            document = self._document()
+            created = document is None
+            entries = self._entries(document)
+            default = (document or {}).get("default_workspace_id")
+            existing = next((item for item in entries
+                             if (self.paths.config / Path(item["root"]).expanduser()).resolve() == project), None)
             added = existing is None
-            new_policy = None
             if added:
                 identifier, counter = wanted, 2
-                identifiers = {item["id"] for item in registry["workspaces"]}
-                while identifier in identifiers:
+                taken = {item["id"] for item in entries}
+                while identifier in taken:
                     suffix = f"-{counter}"
-                    identifier = wanted[:48 - len(suffix)].rstrip("-") + suffix
+                    identifier = wanted[:64 - len(suffix)].rstrip("-") + suffix
                     counter += 1
-                policy_path = self.paths.policies / f"{identifier}.json"
-                if not policy_path.exists():
-                    atomic_json(policy_path, {
-                        "version": 1, "name": "ProUse workspace context",
-                        "files": ["README", "README.md", "README.rst", "LICENSE", "CONTRIBUTING.md"],
-                        "directories": [{"path": ".", "extensions": sorted(ALLOWED_EXTENSIONS)}],
-                    })
-                    new_policy = policy_path
-                existing = {"id": identifier, "label": label or project.name, "root": str(project),
-                            "enabled": True, "default_worker_profile": registry["default_worker_profile"],
-                            "context_policy": str(policy_path)}
-                registry["workspaces"].append(existing)
-                if not registry.get("default_workspace_id"):
-                    registry["default_workspace_id"] = identifier
-            try:
-                Registry(registry, self.paths.config)
-            except (OSError, ValueError):
-                if new_policy is not None:
-                    new_policy.unlink(missing_ok=True)
-                raise
-            atomic_json(self.paths.registry, registry)
-            atomic_json(self.paths.settings, {**document, **asdict(settings)})
+                existing = {"id": identifier, "label": label or project.name, "root": str(project), "enabled": True}
+                entries.append(existing)
+            else:
+                existing["enabled"] = True
+                if label is not None:
+                    existing["label"] = label
+            if make_default or not default:
+                default = existing["id"]
+            self._save(entries, default)
         return {"status": "configured", "created": created, "workspace_added": added,
-                "workspace_id": existing["id"], "workspace": str(project),
-                "registry": str(self.paths.registry), "next_action": "Run `prouse start`."}
+                "workspace_id": existing["id"], "workspace": str(project), "default": default == existing["id"],
+                "registry": str(self.paths.registry)}
+
+    def remove(self, workspace_id: str) -> dict:
+        with file_lock(self.paths.config / "registry.lock"):
+            document = self._document()
+            entries = self._entries(document)
+            if not any(item["id"] == workspace_id for item in entries):
+                raise CLIError(f"Unknown workspace: {workspace_id}", ExitCode.USAGE)
+            entries = [item for item in entries if item["id"] != workspace_id]
+            self._save(entries, (document or {}).get("default_workspace_id"))
+        return {"status": "removed", "workspace_id": workspace_id, "registry": str(self.paths.registry)}
+
+    def update(self, workspace_id: str, *, label: str | None = None, enabled: bool | None = None,
+               make_default: bool = False) -> dict:
+        if label is not None and not 1 <= len(label) <= 120:
+            raise CLIError("Labels must contain 1 to 120 characters", ExitCode.USAGE)
+        with file_lock(self.paths.config / "registry.lock"):
+            document = self._document()
+            entries = self._entries(document)
+            entry = next((item for item in entries if item["id"] == workspace_id), None)
+            if entry is None:
+                raise CLIError(f"Unknown workspace: {workspace_id}", ExitCode.USAGE)
+            if label is not None:
+                entry["label"] = label
+            if enabled is not None:
+                entry["enabled"] = enabled
+            default = (document or {}).get("default_workspace_id")
+            if make_default:
+                if not entry["enabled"]:
+                    raise CLIError(f"Workspace {workspace_id} is disabled; enable it before making it the default",
+                                   ExitCode.USAGE)
+                default = workspace_id
+            self._save(entries, default)
+        return {"status": "updated", "workspace_id": workspace_id, "registry": str(self.paths.registry)}
+
+    def set_default(self, workspace_id: str) -> dict:
+        return {**self.update(workspace_id, make_default=True), "status": "default_set"}

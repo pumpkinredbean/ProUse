@@ -1,4 +1,4 @@
-"""Owned Admin lifecycle, independent of argument parsing and presentation."""
+"""Owned dashboard lifecycle, independent of argument parsing and presentation."""
 from __future__ import annotations
 
 import os
@@ -34,7 +34,7 @@ class AdminRuntime:
             "running": record is not None,
             "admin_ready": ready,
             "pid": record.pid if record else None,
-            "admin_urls": admin_urls(settings) if self.paths.registry.is_file() else [],
+            "admin_urls": admin_urls(settings),
         }
         if stale:
             result["recovered"] = stale
@@ -46,15 +46,15 @@ class AdminRuntime:
             return self._start(host, port, timeout)
 
     def _start(self, host: str | None, port: int | None, timeout: float) -> dict:
-        self.config.registry()
+        self.config.check()
         settings = self.config.settings().override(host, port)
         record, _ = self.instance.current()
         if record:
             if (host is not None and host != record.host) or (port is not None and port != record.port):
-                raise CLIError("ProUse is already running at another address. Use `prouse restart` to change it.")
+                raise CLIError("The dashboard is already running at another address. Use `prouse restart` to change it.")
             result = self.status()
             if not result["admin_ready"]:
-                raise CLIError("The owned ProUse process is not healthy. Run `prouse logs` or `prouse restart`.")
+                raise CLIError("The dashboard process is not healthy. Run `prouse logs` or `prouse restart`.")
             return {**result, "status": "already_running"}
 
         self.paths.prepare_runtime()
@@ -71,12 +71,12 @@ class AdminRuntime:
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 if child.poll() is not None:
-                    raise CLIError(f"ProUse could not start (exit {child.returncode}). Run `prouse logs`.")
+                    raise CLIError(f"The dashboard could not start (exit {child.returncode}). Run `prouse logs`.")
                 record, _ = self.instance.current()
                 if record and record.pid == child.pid and healthy(record.settings):
                     return self.status()
                 time.sleep(0.1)
-            raise CLIError(f"ProUse did not become ready within {timeout:g}s. Run `prouse logs`.")
+            raise CLIError(f"The dashboard did not become ready within {timeout:g}s. Run `prouse logs`.")
         except BaseException:
             # Startup owns this child only. Never signal an unrelated port listener.
             if child.poll() is None:
@@ -91,28 +91,27 @@ class AdminRuntime:
 
     def run(self, *, host: str | None = None, port: int | None = None,
             on_ready: Callable[[dict], None]) -> None:
-        self.config.registry()
+        self.config.check()
         settings = self.config.settings().override(host, port)
         try:
             with file_lock(self.instance.lock, blocking=False):
                 # Support receipts written by earlier CLI versions as well.
                 record, _ = self.instance.current()
                 if record:
-                    raise CLIError("ProUse is already running. Run `prouse status` or `prouse stop`.")
+                    raise CLIError("The dashboard is already running. Run `prouse status` or `prouse stop`.")
                 self._serve(settings, on_ready)
         except BlockingIOError:
-            raise CLIError("ProUse is already running or starting. Run `prouse status`.") from None
+            raise CLIError("The dashboard is already running or starting. Run `prouse status`.") from None
 
     def _serve(self, settings: AdminSettings, on_ready: Callable[[dict], None]) -> None:
-        from admin_server import Admin, Server
+        from .dashboard import Dashboard, Server
 
         self.paths.prepare_runtime()
         with capture(self.paths.log):
-            admin = Admin(self.paths.registry)
             try:
-                server = Server((settings.host, settings.port), admin, allowed_hosts(settings))
+                server = Server((settings.host, settings.port), Dashboard(self.config), allowed_hosts(settings))
             except OSError as exc:
-                raise CLIError(f"Cannot start Admin on {settings.host}:{settings.port}: {exc}") from None
+                raise CLIError(f"Cannot start the dashboard on {settings.host}:{settings.port}: {exc}") from None
             record = None
 
             def terminate(_signum, _frame):
@@ -153,12 +152,12 @@ class AdminRuntime:
                 self.instance.current()
                 return {"status": "stopped", "pid": record.pid}
             time.sleep(0.05)
-        raise CLIError(f"Owned ProUse process {record.pid} did not stop within {timeout:g}s")
+        raise CLIError(f"Dashboard process {record.pid} did not stop within {timeout:g}s")
 
     def restart(self, *, host: str | None = None, port: int | None = None,
                 timeout: float = 10, start_timeout: float = 15) -> dict:
         # Invalid replacement configuration must not stop a healthy process.
-        self.config.registry()
+        self.config.check()
         self.config.settings().override(host, port)
         with file_lock(self.paths.run / "lifecycle.lock"):
             self._stop(timeout)

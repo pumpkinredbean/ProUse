@@ -2,14 +2,15 @@
 
 This is the authoritative procedure for a local coding agent. Work only on the user's
 machine, preserve existing `PROUSE_HOME` configuration, and report what you actually
-verified. A request to install ProUse authorizes its local prerequisites, workspace
-setup, and background Admin process. Complete those steps without asking again.
-Browser sign-in and client authorization remain the user's actions.
+verified. A request to install ProUse authorizes its local prerequisites and workspace
+setup; complete those steps without asking again. Editing the user's MCP client
+configuration and restarting the client remain the user's decisions unless they asked
+you to do them.
 
 Use the user's current project as the workspace. Record its absolute path **before**
-changing into a ProUse checkout; do not accidentally register the installer checkout.
+changing into a ProUse checkout; do not register the installer checkout by accident.
 Use the official installer below. If the user explicitly supplied a local ProUse
-checkout for installation, use that checkout instead.
+checkout, use that checkout instead.
 
 ## Install or update
 
@@ -17,8 +18,6 @@ The installer supports macOS and Linux. It bootstraps `uv` from
 [Astral's official installer](https://docs.astral.sh/uv/reference/installer/) when
 missing and lets uv supply Python 3.13. `PROUSE_PYTHON` can override the interpreter;
 manual installations require Python 3.11+. No sudo or virtualenv activation is needed.
-
-Download and run the official installer:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pumpkinredbean/ProUse/main/install.sh -o /tmp/prouse-install.sh
@@ -29,89 +28,52 @@ For an explicitly supplied local checkout, run `sh install.sh --source .` from t
 checkout instead.
 
 The installer uses `uv tool install --force --reinstall`, so rerunning it updates even
-when the package version has not changed. It does not edit `~/.prouse`. It reports the
-installed executable's absolute path and updates future shells if its bin directory
-is missing from PATH. Use that absolute path for all following commands when the
-agent's current PATH has not refreshed. `--no-modify-path` disables shell changes.
-A source checkout is not needed after installation. Do not substitute a PyPI package
-name or a different source if the official installer is unavailable; report that error.
+when the package version has not changed. It does not edit `~/.prouse` or any MCP
+client configuration. It reports the installed executable's absolute path and updates
+future shells if its bin directory is missing from PATH. Use that absolute path for
+the following commands when the current PATH has not refreshed. `--no-modify-path`
+disables shell changes. Do not substitute a PyPI package name or a different source if
+the official installer is unavailable; report that error.
 
-## Configure without prompts
+ProUse uses ripgrep for `grep` and `find` when it is installed and falls back to a
+slower built-in search otherwise. Install ripgrep with the system package manager if
+the user agrees (`brew install ripgrep` on macOS).
 
-Choose an existing explicit project directory. Quote paths containing spaces.
+## Register the project
+
+Quote paths containing spaces.
 
 ```bash
 prouse setup --workspace "/absolute/path/to/project" --no-input --json
 ```
 
 `PROUSE_HOME` defaults to `~/.prouse`; set it to an absolute isolated directory for
-tests or a separate instance. Setup is repeatable: an already registered workspace and
-all existing profiles, workspaces, settings, policies, receipts, and state are kept.
-Exit 0 with `status: configured` means the registry was validated. Exit 2 means required
-noninteractive input was missing or invalid; exit 1 means configuration could not be
-validated.
+tests or a separate instance. Setup is repeatable: existing workspaces and settings are
+kept, and registering the same folder again returns its existing id. The first
+workspace becomes the default; add `--default` to make this project the default when
+others are already registered. Exit 0 with `status: configured` means the registry was
+written and validated. Exit 2 means the input was missing or invalid (for example the
+home folder, or a path that does not exist).
 
-On a remote development host where the user expects LAN access, add `--host 0.0.0.0`
-to setup. The CLI adds the detected LAN address to the allowed hosts. Preserve a
-previous host/port setting unless the task calls for changing it.
-
-## Start and verify
-
-`prouse start` starts a detached process and returns only after its health check passes.
-It survives the agent's terminal ending. Running it again returns the existing instance.
+## Verify
 
 ```bash
-prouse start --json
-prouse status --json
 prouse doctor --json
-prouse mcp check --workspace-id WORKSPACE_ID_FROM_SETUP --json
+prouse mcp check --json
 prouse mcp config
 ```
 
-The MCP check starts a temporary client-owned stdio server, performs `initialize`,
-`tools/list`, `list_workspaces`, and a scoped `list_directory` read, then shuts that
-temporary server down. It exits 0 only when those steps succeed; failure or timeout
-exits 1. It does not authorize or connect an external client. Check the requested
-workspace ID from setup instead of relying on a different registered workspace.
-
-Fetch the reported dashboard URL and `/healthz` before handing it to the user.
-On a remote host, verify and report the actual LAN IP and port, not `0.0.0.0` or
-localhost. Also keep any diagnostic warnings in the final handoff.
-
-`status` exits 0 only when the owned Admin process answers its health check and exits 3
-when stopped. Its fields are deliberately separate:
-
-- `local_installation`: the installed command and version are ready;
-- `configured`: local registry exists;
-- `running` / `admin_ready`: the Admin lifecycle and HTTP health check;
-- `mcp.handshake`: stdio MCP is client-owned and is not inferred from Admin health;
-- `client_connection`: connection/authorization cannot be inferred locally.
-
-`doctor` treats a missing Codex executable as a warning: local context and Admin remain
-usable, while delegated workers/direct Codex execution do not. It exits 0 when the
-installation/configuration is usable (warnings may remain) and 1 for a fatal local
-configuration error. Retry with `prouse logs` and `prouse doctor --json`. Use
-`prouse restart` after correcting configuration or updating the package. Stop the
-owned instance with `prouse stop`; it never uses a generic process kill.
-
-For an attached terminal instead, `prouse run`
-runs in the foreground and Ctrl-C stops it. Do not use that mode for a one-shot agent
-installation that needs to return while keeping Admin running.
-
-For login autostart, use `prouse service install`, `status`, or `uninstall`. This creates
-an instance-specific macOS launchd or Linux systemd-user unit. `prouse stop` stops the
-current process; service `uninstall` also disables future autostart. Windows login
-services are not currently supported.
-
-Admin binds to `127.0.0.1` by default. Binding `--host 0.0.0.0` exposes the unauthenticated
-operator dashboard to the LAN and should be an explicit, trusted-network decision; report
-the actual reachable LAN URL when that mode is requested.
+`doctor` exits 0 when the installation is usable, possibly with warnings (such as
+ripgrep missing), and 1 for a fatal configuration error. `mcp check` starts a temporary
+stdio server exactly as an MCP client would, performs `initialize` and `tools/list`,
+calls `workspaces` and lists the default workspace with `ls`, then stops the server.
+It exits 0 only when all of that succeeds. A success reports
+`client_connection: not_verified`, because no local check can prove that the user's
+chat app has connected.
 
 ## MCP client handoff
 
-Run `prouse mcp config` to generate the configuration for the installed executable
-and selected instance. Merge the `prouse` entry into the client's existing
-`mcpServers` map; preserve unrelated entries. Its shape is:
+`prouse mcp config` prints the configuration for this installation and instance:
 
 ```json
 {
@@ -125,25 +87,41 @@ and selected instance. Merge the `prouse` entry into the client's existing
 }
 ```
 
-Do not detach `prouse mcp serve`; stdin/stdout belong to the client. Verify an actual
-MCP `initialize`, `tools/list`, and a workspace read with `prouse mcp check` before
-reporting local handshake success. An external client's connection remains unverified
-until that client exercises the tools.
+Merge the `prouse` entry into the client's existing `mcpServers` map and keep every
+other entry. For Claude Desktop on macOS the file is
+`~/Library/Application Support/Claude/claude_desktop_config.json`; back it up before
+editing, and fully quit and reopen Claude Desktop afterwards. Never run
+`prouse mcp serve` yourself in the background; its stdin and stdout belong to the
+client that starts it.
 
-ChatGPT does not connect to the local Admin URL and a healthy dashboard does not imply a
-ChatGPT connection. Follow OpenAI's current [Connect and test your plugin](https://developers.openai.com/plugins/deploy/connect-chatgpt/)
-instructions: enable developer mode, then use either a public HTTPS MCP endpoint or the
-documented [Secure MCP Tunnel](https://developers.openai.com/api/docs/guides/secure-mcp-tunnels).
-The user must complete any browser sign-in, connection selection, and authorization.
-ProUse does not claim that handoff succeeded until ChatGPT shows and exercises the MCP
-connection.
+ProUse speaks MCP over stdio only, so it works with desktop clients that start local
+MCP servers. Web and mobile chat apps need a remote MCP endpoint with authentication,
+which ProUse does not provide; do not tunnel the stdio server to the Internet, because
+the `bash` tool runs commands as the user.
+
+## Optional dashboard
+
+The MCP server does not need it. If the user wants a local page for managing
+workspaces:
+
+```bash
+prouse start --json
+prouse status --json
+```
+
+`prouse start` starts a detached process and returns after its health check passes;
+running it again returns the existing instance. `status` exits 0 when the dashboard
+answers its health check and 3 when it is stopped. `prouse stop` stops it, and
+`prouse service install` starts it at login (launchd on macOS, systemd user units on
+Linux). It binds to `127.0.0.1:8848`; do not bind it to another address unless the user
+asks, because it has no login.
 
 ## Receipt to the user
 
-Report the installed `prouse --version`, executable path, `PROUSE_HOME`, workspace ID,
-dashboard URL(s), setup/status/doctor results, MCP handshake result (or
-`not_tested`), ChatGPT connection state (`not_verified` until user authorization), and
-the `prouse stop` / `prouse restart` commands. Include the exact generated
-MCP config. If `PROUSE_HOME` was customized, prefix follow-up commands with that same
-value so they target the right instance. Keep the handoff short; give a concrete next
-step for any failed check instead of reporting the installation as fully complete.
+Report the installed `prouse --version`, executable path, `PROUSE_HOME`, workspace id,
+the `doctor` and `mcp check` results with any warnings, and the exact output of
+`prouse mcp config` with where it goes. State the client connection as `not_verified`
+until the user's chat app has called a ProUse tool. If `PROUSE_HOME` was customized,
+prefix follow-up commands with the same value. Keep the handoff short, and give a
+concrete next step for any failed check instead of reporting the installation as
+complete.

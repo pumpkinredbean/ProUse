@@ -1,4 +1,4 @@
-"""Top-level commands for the owned Admin process."""
+"""Top-level commands for the optional workspace dashboard process."""
 import argparse
 
 from ..command import CommandContext, json_flag, listener_flags, positive_seconds
@@ -7,11 +7,11 @@ from ..errors import ExitCode
 
 def register(commands) -> None:
     for name, help_text, handler in (
-        ("start", "start in the background and wait for readiness", start),
-        ("run", "run in the foreground until interrupted", run),
-        ("restart", "restart in the background and wait for readiness", restart),
-        ("stop", "stop the process owned by this instance", stop),
-        ("status", "show instance readiness and connection details", status),
+        ("start", "start the workspace dashboard in the background", start),
+        ("run", "run the dashboard in the foreground until interrupted", run),
+        ("restart", "restart the dashboard in the background", restart),
+        ("stop", "stop the dashboard owned by this instance", stop),
+        ("status", "show dashboard readiness and MCP connection details", status),
     ):
         parser = commands.add_parser(name, help=help_text)
         json_flag(parser)

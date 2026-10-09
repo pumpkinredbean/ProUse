@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Changed
+
+- Replace the MCP tools with the coding tool set of the pi agent: `read`, `write`,
+  `edit`, `bash`, `grep`, `find` and `ls`, plus `workspaces` (registered folders and
+  `AGENTS.md` / `CLAUDE.md` project instructions) and `bash_job`. Results are plain
+  text truncated to 2000 lines or 50KB with continuation notices, so every MCP client
+  passes them to the model.
+- `bash` runs commands directly with the user's login-shell environment. A command still
+  running after 45 seconds continues as a background job, which keeps each tool call
+  inside chat apps' time limits.
+- Tools take absolute, `~`-based or default-workspace-relative paths instead of
+  workspace ids and policy-relative paths.
+- The registry is version 2 and holds only workspaces. Version 1 registries are still
+  read and are rewritten the next time a workspace changes.
+- The Admin UI is now a small dashboard for managing workspaces and copying the MCP
+  client configuration; `prouse start` is optional.
+- Add `prouse workspace list|add|default|remove`.
+
+### Removed
+
+- Codex worker delegation, direct `argv` execution with receipts and diffs, context
+  policies, secret-path filtering, SHA-256 write preconditions, `delete_file`, and the
+  `pro-advisor` skill. Codex is no longer required.
+
+### Earlier unreleased changes
+
 - Return each MCP tool result as JSON text alongside `structuredContent`, so clients
   that only pass text content to the model (such as Claude Desktop) can read results.
 - Make `prouse start` and `prouse restart` start in the background by default;
