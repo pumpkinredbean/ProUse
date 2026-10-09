@@ -462,5 +462,17 @@ class InstalledStyleMCPTests(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual(response.content[0].text, str(base / "home"))
 
 
+class ForegroundLogTests(unittest.TestCase):
+    def test_captured_stderr_can_be_handed_to_a_child_process(self):
+        from prouse.runtime import logs
+
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryFile("w+") as terminal:
+            with mock.patch.object(sys, "stderr", terminal), logs.capture(Path(tmp) / "admin.log"):
+                subprocess.run([sys.executable, "-c", "import sys; sys.stderr.write('child')"],
+                               stderr=sys.stderr, check=True)
+            terminal.seek(0)
+            self.assertEqual(terminal.read(), "child")
+
+
 if __name__ == "__main__":
     unittest.main()
