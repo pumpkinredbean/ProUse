@@ -7,8 +7,8 @@ const esc = (value) =>
   );
 const tabs = { workspaces: "Workspaces", connection: "Connection" };
 const statuses = {
-  ready: ["Active", "good"],
-  disabled: ["Off", ""],
+  ready: ["Active", "ok"],
+  disabled: ["Off", "off"],
   unavailable: ["Unavailable", "bad"],
 };
 let csrf = "";
@@ -38,12 +38,8 @@ function button(label, action, cls = "", attrs = "") {
   return `<button type="button" class="${cls}" data-action="${action}" ${attrs}>${label}</button>`;
 }
 
-function badge(label, cls = "") {
-  return `<span class="badge ${cls}">${esc(label)}</span>`;
-}
-
 function header(title, description, action = "") {
-  return `<div class="title-row"><div><h1>${title}</h1><p class="muted">${description}</p></div><div class="actions">${action}${button("Refresh", "refresh")}</div></div>`;
+  return `<div class="page-head"><div><h1>${title}</h1><p class="muted">${description}</p></div>${action}</div>`;
 }
 
 async function connect() {
@@ -52,7 +48,7 @@ async function connect() {
     await refresh();
   } catch (error) {
     data = null;
-    $("#app").innerHTML = `<main class="main"><section class="card"><h1>Cannot reach the dashboard</h1><p class="error">${esc(error.message)}</p><p class="muted">Run <code>prouse status</code> in a terminal to check it.</p>${button("Reconnect", "reconnect")}</section></main>`;
+    $("#app").innerHTML = `<main class="main"><section class="panel"><h1>Cannot reach the dashboard</h1><p class="error">${esc(error.message)}</p><p class="muted">Run <code>prouse status</code> in a terminal to check it.</p>${button("Reconnect", "reconnect")}</section></main>`;
   }
 }
 
@@ -67,24 +63,24 @@ function render() {
     .map(([key, label]) => button(label, "nav", tab === key ? "active" : "", `data-tab="${key}"`))
     .join("");
   const view = tab === "workspaces" ? workspacesView() : connectionView();
-  $("#app").innerHTML = `<div class="shell"><aside class="sidebar"><div class="brand">ProUse<small>Use Pro models across your local workspaces.</small></div><nav class="nav">${nav}</nav><div class="sidebar-footer">Local dashboard for this computer.<br>Changes apply from the next tool call.</div></aside><main class="main">${view}</main></div>`;
+  $("#app").innerHTML = `<header class="topbar"><div class="topbar-inner"><span class="brand">ProUse</span><nav class="tabs">${nav}</nav>${button("Refresh", "refresh", "ghost")}</div></header><main class="main">${view}<p class="footnote">Local dashboard for this computer. Changes apply from the next tool call.</p></main>`;
 }
 
 function workspacesView() {
   const rows = data.workspaces
     .map((w) => {
       const [label, cls] = statuses[w.status] || [w.status, ""];
-      const reason = w.reason ? `<span class="secondary">${esc(w.reason)}</span>` : "";
+      const reason = w.reason ? ` · ${esc(w.reason)}` : "";
       const actions = [
-        w.status === "ready" && !w.default ? button("Make default", "workspace-default", "", `data-id="${esc(w.id)}"`) : "",
-        button("Edit", "workspace-edit", "", `data-id="${esc(w.id)}"`),
-        button("Remove", "workspace-remove", "danger", `data-id="${esc(w.id)}"`),
+        w.status === "ready" && !w.default ? button("Make default", "workspace-default", "ghost", `data-id="${esc(w.id)}"`) : "",
+        button("Edit", "workspace-edit", "ghost", `data-id="${esc(w.id)}"`),
+        button("Remove", "workspace-remove", "ghost danger", `data-id="${esc(w.id)}"`),
       ].join("");
-      return `<tr><td><strong>${esc(w.label)}</strong> ${w.default ? badge("Default", "good") : ""}<span class="secondary mono">${esc(w.id)} · ${esc(w.root)}</span></td><td>${badge(label, cls)}${reason}</td><td><div class="actions end">${actions}</div></td></tr>`;
+      return `<li class="row"><div class="row-main"><div class="row-title"><strong>${esc(w.label)}</strong>${w.default ? '<span class="tag">Default</span>' : ""}</div><span class="path">${esc(w.root)}</span></div><span class="status ${cls}">${esc(label)}${reason}</span><div class="actions">${actions}</div></li>`;
     })
     .join("");
-  const table = rows
-    ? `<div class="table-wrap"><table><thead><tr><th>Workspace</th><th>Status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`
+  const list = rows
+    ? `<ul class="list">${rows}</ul>`
     : '<p class="empty">No workspaces yet. Add a project folder you want AI chats to work in.</p>';
   return (
     header(
@@ -92,16 +88,16 @@ function workspacesView() {
       "Project folders that AI chats can read and edit through ProUse tools.",
       button("+ Add workspace", "workspace-add", "primary"),
     ) +
-    `<section class="card">${table}</section><p class="muted">Relative paths resolve against the default workspace. Removing a workspace only unregisters it; the folder and its files stay.</p>`
+    `<section class="panel flush">${list}</section><p class="muted note">Relative paths resolve against the default workspace. Removing a workspace only unregisters it; the folder and its files stay.</p>`
   );
 }
 
 function connectionView() {
   return (
     header("Connection", "Connect an MCP client such as Claude Desktop to the ProUse tools.") +
-    `<section class="card"><h2>Connect Claude Desktop</h2><ol class="steps"><li>Open the Claude Desktop config file. On macOS it is <code>~/Library/Application Support/Claude/claude_desktop_config.json</code>.</li><li>If the file is empty, paste the block below as is. If it already has <code>mcpServers</code>, add or replace only the <code>prouse</code> entry inside it.</li><li>Quit Claude Desktop completely and open it again.</li></ol><pre class="detail" id="mcp-config">${esc(JSON.stringify(data.mcp_config, null, 2))}</pre><div class="actions">${button("Copy", "copy-config")}</div></section>` +
-    `<section class="card"><h2>Check the connection</h2><p class="muted">Starts the ProUse MCP server on this computer and checks initialization, the tool list and a read from the default workspace. Check the Claude Desktop side in Claude Desktop itself.</p><div class="actions">${button("Check MCP connection", "mcp-check", "primary")}</div><div id="check-result" class="preview"></div></section>` +
-    `<p class="muted">ProUse ${esc(data.version)} · config file <span class="mono">${esc(data.registry)}</span></p>`
+    `<section class="panel"><h2>Connect Claude Desktop</h2><ol class="steps"><li>Open the Claude Desktop config file. On macOS it is <code>~/Library/Application Support/Claude/claude_desktop_config.json</code>.</li><li>If the file is empty, paste the block below as is. If it already has <code>mcpServers</code>, add or replace only the <code>prouse</code> entry inside it.</li><li>Quit Claude Desktop completely and open it again.</li></ol><div class="code-block"><pre id="mcp-config">${esc(JSON.stringify(data.mcp_config, null, 2))}</pre>${button("Copy", "copy-config", "ghost copy")}</div></section>` +
+    `<section class="panel"><h2>Check the connection</h2><p class="muted">Starts the ProUse MCP server on this computer and checks initialization, the tool list and a read from the default workspace. Check the Claude Desktop side in Claude Desktop itself.</p><div class="actions">${button("Check MCP connection", "mcp-check", "primary")}</div><div id="check-result" class="preview"></div></section>` +
+    `<p class="muted note">ProUse ${esc(data.version)} · config file <span class="mono">${esc(data.registry)}</span></p>`
   );
 }
 
@@ -137,7 +133,7 @@ function showError(message) {
 }
 
 function footer(label) {
-  return `<footer>${button("Cancel", "close")}<button class="primary" type="submit">${label}</button></footer>`;
+  return `<footer>${button("Cancel", "close", "ghost")}<button class="primary" type="submit">${label}</button></footer>`;
 }
 
 function find(id) {
@@ -166,11 +162,11 @@ async function browse(path) {
   const target = $("#browser");
   if (!target) return;
   const actions = [
-    result.parent ? button("Parent folder", "browse", "", `data-path="${esc(result.parent)}"`) : "",
+    result.parent ? button("Parent folder", "browse", "ghost", `data-path="${esc(result.parent)}"`) : "",
     button("Select this folder", "browse-select", "primary", `data-path="${esc(result.path)}" ${result.can_select ? "" : "disabled"}`),
   ].join("");
   const list =
-    result.directories.map((d) => button(`📁 ${esc(d.name)}`, "browse", "", `data-path="${esc(d.path)}"`)).join("") ||
+    result.directories.map((d) => button(esc(d.name), "browse", "folder", `data-path="${esc(d.path)}"`)).join("") ||
     '<span class="muted">No subfolders.</span>';
   target.innerHTML = `<div class="workspace-browser"><div class="workspace-browser-head"><strong class="mono">${esc(result.path)}</strong><div class="actions">${actions}</div></div><div class="workspace-directory-list">${list}</div></div>`;
 }
@@ -209,7 +205,7 @@ function workspaceRemove(id) {
   if (!w) return;
   modal(
     "Remove workspace",
-    `<p>Unregisters <strong>${esc(w.label)}</strong>. The folder and its files stay.</p><p class="mono">${esc(w.root)}</p><footer>${button("Cancel", "close")}${button("Remove", "workspace-remove-confirm", "danger", `data-id="${esc(id)}"`)}</footer>`,
+    `<p>Unregisters <strong>${esc(w.label)}</strong>. The folder and its files stay.</p><p class="mono">${esc(w.root)}</p><footer>${button("Cancel", "close", "ghost")}${button("Remove", "workspace-remove-confirm", "danger solid", `data-id="${esc(id)}"`)}</footer>`,
   );
 }
 
@@ -234,7 +230,7 @@ async function mcpCheck(control) {
     const result = await api("/api/mcp/check", {});
     $("#check-result").innerHTML =
       result.status === "ok"
-        ? `<div class="notice">Connected · ${esc(result.tools)} tools · default workspace readable</div>`
+        ? `<p class="status ok">Connected · ${esc(result.tools)} tools · default workspace readable</p>`
         : `<p class="error">${esc(result.error)}</p>`;
   } finally {
     if (control.isConnected) {
