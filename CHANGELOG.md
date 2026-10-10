@@ -4,8 +4,9 @@
 
 ### Changed
 
-- Translate the dashboard to English. It was Korean-only, while the CLI, README and
-  `docs/` are English.
+- Translate the dashboard to English and redesign it. It was Korean-only, while the CLI,
+  README and `docs/` are English. Workspaces open in an edit sheet with switches, paths
+  under the home folder show as `~/…`, and the page follows the system light or dark mode.
 - Replace the MCP tools with the coding tool set of the pi agent: `read`, `write`,
   `edit`, `bash`, `grep`, `find` and `ls`, plus `workspaces` (registered folders and
   `AGENTS.md` / `CLAUDE.md` project instructions) and `bash_job`. Results are plain

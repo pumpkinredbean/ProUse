@@ -20,7 +20,8 @@ from ..integrations import mcp
 
 ASSETS = {"/": ("index.html", "text/html; charset=utf-8"),
           "/app.js": ("app.js", "text/javascript; charset=utf-8"),
-          "/style.css": ("style.css", "text/css; charset=utf-8")}
+          "/style.css": ("style.css", "text/css; charset=utf-8"),
+          "/icon.svg": ("icon.svg", "image/svg+xml")}
 HEADERS = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
            "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self'; "
                                       "frame-ancestors 'none'; base-uri 'none'"}
@@ -58,7 +59,7 @@ class Dashboard:
         self.config = config
 
     def state(self) -> dict:
-        return {**self.config.listing(), "version": __version__,
+        return {**self.config.listing(), "version": __version__, "home": str(Path.home().resolve()),
                 "mcp_config": {"mcpServers": {"prouse": mcp.command(self.config.paths)}}}
 
     def browse(self, path: str | None) -> dict:

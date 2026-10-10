@@ -25,4 +25,4 @@ packages = ["prouse", "prouse.commands", "prouse.integrations", "prouse.runtime"
             "prouse_assets", "prouse_assets.admin_ui"]
 
 [tool.setuptools.package-data]
-prouse_assets = ["admin_ui/*.html", "admin_ui/*.js", "admin_ui/*.css"]
+prouse_assets = ["admin_ui/*.html", "admin_ui/*.js", "admin_ui/*.css", "admin_ui/*.svg"]
