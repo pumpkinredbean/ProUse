@@ -60,12 +60,15 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("frame-ancestors 'none'", response.getheader("Content-Security-Policy"))
         self.assertEqual(response.getheader("X-Content-Type-Options"), "nosniff")
         self.assertEqual(self.request("GET", "/app.js")[0], 200)
+        status, _, response = self.request("GET", "/icon.svg")
+        self.assertEqual((status, response.getheader("Content-Type")), (200, "image/svg+xml"))
         self.assertEqual(self.request("GET", "/healthz")[1], {"status": "ready"})
 
     def test_workspace_lifecycle(self):
         status, state, _ = self.request("GET", "/api/state")
         self.assertEqual((status, state["workspaces"]), (200, []))
         self.assertEqual(state["mcp_config"]["mcpServers"]["prouse"]["args"], ["mcp", "serve"])
+        self.assertEqual(state["home"], str(self.user_home))
         status, added, _ = self.post("/api/workspaces/add", {"path": str(self.project), "label": "My app"})
         self.assertEqual((status, added["workspace_id"], added["default"]), (200, "app", True))
         status, _, _ = self.post("/api/workspaces/update", {"id": "app", "enabled": False, "label": "Renamed"})
